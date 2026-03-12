@@ -248,8 +248,8 @@ export default function MapPage() {
     }
 
     const coords = track
-      .filter((p: any) => p.longitude != null && p.latitude != null)
-      .map((p: any) => [p.longitude, p.latitude])
+      .filter((p: any) => (p.lng ?? p.longitude) != null)
+      .map((p: any) => [p.lng ?? p.longitude, p.lat ?? p.latitude])
 
     source.setData({
       type: 'FeatureCollection',
