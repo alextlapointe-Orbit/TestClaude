@@ -46,7 +46,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/map" replace />} />
+        <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="map" element={<MapPage />} />
         <Route path="ports" element={<PortsPage />} />
         <Route path="ports/:id" element={<PortDetailPage />} />
