@@ -9,3 +9,6 @@ build/
 node_modules/
 frontend/dist/
 backend/conversations.db
+backend/tmm.db
+*.db-shm
+*.db-wal
