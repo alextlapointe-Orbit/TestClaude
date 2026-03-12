@@ -142,8 +142,56 @@ export default function MapPage() {
         paint: {
           'line-color': '#00d4ff',
           'line-width': 1.5,
-          'line-opacity': 0.5,
+          'line-opacity': 0.4,
           'line-dasharray': [3, 2],
+        },
+      })
+
+      // Historical AIS position dots
+      m.addSource('vessel-track-points', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+
+      // Halo for most-recent point
+      m.addLayer({
+        id: 'vessel-track-points-halo',
+        type: 'circle',
+        source: 'vessel-track-points',
+        filter: ['==', ['get', 'is_latest'], true],
+        paint: {
+          'circle-radius': 10,
+          'circle-color': '#00d4ff',
+          'circle-opacity': 0.15,
+          'circle-stroke-width': 0,
+        },
+      })
+
+      // All historical dots — color fades old→new (dark blue → cyan)
+      m.addLayer({
+        id: 'vessel-track-points-layer',
+        type: 'circle',
+        source: 'vessel-track-points',
+        paint: {
+          'circle-radius': [
+            'case', ['==', ['get', 'is_latest'], true], 5,
+            ['>', ['get', 'age_frac'], 0.8], 3.5,
+            2.5,
+          ],
+          'circle-color': [
+            'interpolate', ['linear'], ['get', 'age_frac'],
+            0, '#1a3a5c',
+            0.5, '#0077aa',
+            1, '#00d4ff',
+          ],
+          'circle-opacity': [
+            'interpolate', ['linear'], ['get', 'age_frac'],
+            0, 0.3,
+            1, 0.95,
+          ],
+          'circle-stroke-width': ['case', ['==', ['get', 'is_latest'], true], 1.5, 0.5],
+          'circle-stroke-color': ['case', ['==', ['get', 'is_latest'], true], '#ffffff', '#00d4ff'],
+          'circle-stroke-opacity': 0.6,
         },
       })
 
@@ -155,6 +203,36 @@ export default function MapPage() {
 
       m.on('mouseenter', 'vessels-layer', () => { m.getCanvas().style.cursor = 'pointer' })
       m.on('mouseleave', 'vessels-layer', () => { m.getCanvas().style.cursor = '' })
+
+      // Hover popup on historical track dots
+      const trackPopup = new mapboxgl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        className: 'tmm-popup',
+        offset: 8,
+      })
+
+      m.on('mouseenter', 'vessel-track-points-layer', (e) => {
+        m.getCanvas().style.cursor = 'crosshair'
+        const f = e.features?.[0]
+        if (!f) return
+        const p = f.properties as any
+        const coord = (f.geometry as any).coordinates as [number, number]
+        const time = p.timestamp ? new Date(p.timestamp).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }) : '—'
+        trackPopup.setLngLat(coord).setHTML(`
+          <div class="text-xs space-y-0.5">
+            <div class="font-semibold text-white">${time}</div>
+            ${p.speed != null ? `<div class="text-slate-300">Speed: ${Number(p.speed).toFixed(1)} kn</div>` : ''}
+            ${p.course != null ? `<div class="text-slate-300">Course: ${Number(p.course).toFixed(0)}°</div>` : ''}
+            <div class="text-slate-400">${Number(coord[1]).toFixed(4)}°, ${Number(coord[0]).toFixed(4)}°</div>
+          </div>
+        `).addTo(m)
+      })
+
+      m.on('mouseleave', 'vessel-track-points-layer', () => {
+        m.getCanvas().style.cursor = ''
+        trackPopup.remove()
+      })
 
       setMapReady(true)
     })
@@ -236,29 +314,60 @@ export default function MapPage() {
     })
   }, [mapReady, vessels, selectedMmsi, getFilteredVessels])
 
-  // Render vessel track when selected
+  // Render vessel track (line + individual position dots) when selected
   useEffect(() => {
     if (!mapReady || !map.current) return
-    const source = map.current.getSource('vessel-track') as mapboxgl.GeoJSONSource
-    if (!source) return
+    const m = map.current
+    const lineSource = m.getSource('vessel-track') as mapboxgl.GeoJSONSource
+    const pointSource = m.getSource('vessel-track-points') as mapboxgl.GeoJSONSource
+    if (!lineSource || !pointSource) return
 
-    if (!selectedMmsi || !track || track.length < 2) {
-      source.setData({ type: 'FeatureCollection', features: [] })
+    const empty = { type: 'FeatureCollection' as const, features: [] }
+
+    if (!selectedMmsi || !track || track.length === 0) {
+      lineSource.setData(empty)
+      pointSource.setData(empty)
       return
     }
 
-    const coords = track
-      .filter((p: any) => (p.lng ?? p.longitude) != null)
-      .map((p: any) => [p.lng ?? p.longitude, p.lat ?? p.latitude])
+    const validPts = track.filter((p: any) => (p.lng ?? p.longitude) != null)
 
-    source.setData({
-      type: 'FeatureCollection',
-      features: [{
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: coords },
-        properties: {},
-      }],
+    // Line
+    if (validPts.length >= 2) {
+      lineSource.setData({
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: validPts.map((p: any) => [p.lng ?? p.longitude, p.lat ?? p.latitude]) },
+          properties: {},
+        }],
+      })
+    } else {
+      lineSource.setData(empty)
+    }
+
+    // Individual position dots with age fraction (0=oldest, 1=newest)
+    const tMin = Math.min(...validPts.map((p: any) => new Date(p.timestamp).getTime()))
+    const tMax = Math.max(...validPts.map((p: any) => new Date(p.timestamp).getTime()))
+    const tRange = tMax - tMin || 1
+
+    const pointFeatures = validPts.map((p: any, i: number) => {
+      const t = new Date(p.timestamp).getTime()
+      const age_frac = (t - tMin) / tRange
+      return {
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [p.lng ?? p.longitude, p.lat ?? p.latitude] },
+        properties: {
+          timestamp: p.timestamp,
+          speed: p.speed,
+          course: p.course,
+          age_frac,
+          is_latest: i === validPts.length - 1,
+        },
+      }
     })
+
+    pointSource.setData({ type: 'FeatureCollection', features: pointFeatures })
   }, [mapReady, selectedMmsi, track])
 
   // Fly to selected vessel
