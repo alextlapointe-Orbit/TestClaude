@@ -1,47 +1,71 @@
-import { useState, useEffect } from 'react'
-import Sidebar from './components/Sidebar.jsx'
-import ChatPanel from './components/ChatPanel.jsx'
+import { useState } from 'react'
+import Landing from './components/Landing.jsx'
+import ModuleGrid from './components/ModuleGrid.jsx'
+import LessonView from './components/LessonView.jsx'
+import { MODULES } from './data/curriculum.js'
 
 export default function App() {
-  const [conversations, setConversations] = useState([])
-  const [activeId, setActiveId] = useState(null)
-
-  const loadConversations = async () => {
+  const [view, setView] = useState('landing') // 'landing' | 'modules' | 'lesson'
+  const [activeModule, setActiveModule] = useState(null)
+  const [activeLesson, setActiveLesson] = useState(null)
+  const [completed, setCompleted] = useState(() => {
     try {
-      const res = await fetch('/api/conversations')
-      setConversations(await res.json())
+      return JSON.parse(localStorage.getItem('claude101_progress') || '{}')
     } catch {
-      // backend not running yet
+      return {}
     }
+  })
+
+  const markComplete = (lessonId) => {
+    const next = { ...completed, [lessonId]: true }
+    setCompleted(next)
+    localStorage.setItem('claude101_progress', JSON.stringify(next))
   }
 
-  useEffect(() => {
-    loadConversations()
-  }, [])
+  const totalLessons = MODULES.reduce((s, m) => s + m.lessons.length, 0)
+  const completedCount = Object.keys(completed).length
 
-  const handleDelete = async (id) => {
-    await fetch(`/api/conversations/${id}`, { method: 'DELETE' })
-    if (activeId === id) setActiveId(null)
-    loadConversations()
+  const goToLesson = (mod, lesson) => {
+    setActiveModule(mod)
+    setActiveLesson(lesson)
+    setView('lesson')
+    window.scrollTo(0, 0)
+  }
+
+  if (view === 'landing') {
+    return (
+      <Landing
+        modules={MODULES}
+        onStart={() => setView('modules')}
+        onSelectLesson={goToLesson}
+        completedCount={completedCount}
+        totalLessons={totalLessons}
+      />
+    )
+  }
+
+  if (view === 'modules') {
+    return (
+      <ModuleGrid
+        modules={MODULES}
+        completed={completed}
+        onSelect={goToLesson}
+        onBack={() => setView('landing')}
+        completedCount={completedCount}
+        totalLessons={totalLessons}
+      />
+    )
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0a0a0a]">
-      <Sidebar
-        conversations={conversations}
-        activeId={activeId}
-        onNew={() => setActiveId(null)}
-        onSelect={setActiveId}
-        onDelete={handleDelete}
-      />
-      <ChatPanel
-        key={activeId ?? '__new__'}
-        conversationId={activeId}
-        onConversationCreated={(id) => {
-          setActiveId(id)
-          loadConversations()
-        }}
-      />
-    </div>
+    <LessonView
+      module={activeModule}
+      lesson={activeLesson}
+      modules={MODULES}
+      completed={completed}
+      onComplete={markComplete}
+      onSelectLesson={goToLesson}
+      onBack={() => setView('modules')}
+    />
   )
 }
