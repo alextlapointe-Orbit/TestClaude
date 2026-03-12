@@ -143,7 +143,8 @@ export default function LessonView({ module: mod, lesson, modules, completed, on
             <LiveChat
               key={`demo-${lessonKey}`}
               initialPrompt={lesson.demoPrompt}
-              placeholder="Or ask your own variation of this demo…"
+              demoLabel={lesson.demoLabel}
+              isDemo
             />
           </section>
 
@@ -181,6 +182,7 @@ export default function LessonView({ module: mod, lesson, modules, completed, on
             <LiveChat
               key={`exercise-${lessonKey}-${exerciseKey}`}
               placeholder="Write your prompt here… (Enter to send)"
+              isDemo={false}
             />
           </section>
 
