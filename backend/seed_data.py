@@ -1,6 +1,6 @@
 """
 Seed script: populates the database with ports, terminals, berths,
-PIL vessels, realistic vessel calls, and default users.
+PIL vessels (full fleet), realistic vessel calls, and default users.
 """
 
 import asyncio
@@ -64,28 +64,168 @@ BERTH_TEMPLATES = [
     ("B01", 400, None), ("B02", 350, None), ("B03", 300, 14.0), ("B04", 280, 12.5),
 ]
 
-# PIL fleet — real-world inspired vessels
+# Full PIL fleet
+# (mmsi, imo, name, teu, loa_m, flag, gt, dwt)
+# MMSIs: fictional but MMSI-format valid (flag-prefix + sequential)
+# IMOs: 99xxxxx range (unallocated, for demo use only)
 PIL_VESSELS = [
-    # (mmsi, imo, name, teu, loa_m, flag)
-    ("563080600", "9632179", "PIL GUANGZHOU",  4300, 260, "SG"),
-    ("563027360", "9388340", "KOTA BUANA",     3091, 225, "SG"),
-    ("563092600", "9702430", "PIL KAOHSIUNG",  3800, 250, "SG"),
-    ("477249600", "9571111", "KOTA LAMBAI",    2824, 214, "HK"),
-    ("563001230", "9239831", "KOTA LEGIS",     2490, 210, "SG"),
-    ("563042180", "9388352", "KOTA LUKIS",     3091, 225, "SG"),
-    ("477329500", "9571123", "KOTA LAMA",      2824, 214, "HK"),
-    ("563013700", "9335173", "PIL SINGAPORE",  4253, 260, "SG"),
-    ("477491900", "9632181", "PIL HONG KONG",  4300, 260, "HK"),
-    ("563088800", "9702442", "PIL MANILA",     3800, 250, "SG"),
+    # ── A ───────────────────────────────────────────────────────
+    ("636000001", "9900001", "ASTERIOS",              1827, 185, "LR",  22750,  7789),
+    # ── HUDONG 13K series (newbuildings on order) ────────────────
+    ("563000001", "9900002", "HUDONG 13K H1933A",    13064, 383, "SG", 131423, None),
+    ("563000002", "9900003", "HUDONG 13K H1934A",    13064, 383, "SG", 131423, None),
+    ("563000003", "9900004", "HUDONG 13K H1935A",    13064, 383, "SG", 131423, None),
+    ("563000004", "9900005", "HUDONG 13K H1936A",    13064, 383, "SG", 131423, None),
+    ("563000005", "9900006", "HUDONG 13K H1937A",    13064, 383, "SG", 131423, None),
+    # ── K-A ─────────────────────────────────────────────────────
+    ("563000006", "9900007", "KOTA ANGGUN",           1454, 175, "SG",  23842,  8156),
+    ("563000007", "9900008", "KOTA AZAM",             1454, 175, "SG",  23825,  8156),
+    # ── K-C ─────────────────────────────────────────────────────
+    ("563000008", "9900009", "KOTA CABAR",            6606, 302, "SG",  89119, 41719),
+    ("563000009", "9900010", "KOTA CAHAYA",           6606, 302, "SG",  83963, 41719),
+    ("538000001", "9900011", "KOTA CALLAO",           7092, 320, "MH",  73172, 45182),
+    ("563000010", "9900012", "KOTA CANTIK",           6606, 302, "SG",  83963, 41723),
+    ("563000011", "9900013", "KOTA CARUM",            6606, 302, "SG",  83963, 41735),
+    ("563000012", "9900014", "KOTA CEMPAKA",          6606, 302, "SG",  89488, 41703),
+    ("563000013", "9900015", "KOTA CEPAT",            6606, 302, "SG",  84331, 41703),
+    # ── K-D ─────────────────────────────────────────────────────
+    ("563000014", "9900016", "KOTA DAHLIA",            628, 120, "SG",   8164,  2656),
+    ("563000015", "9900017", "KOTA DUNIA",             628, 120, "SG",   8214,  2656),
+    ("563000016", "9900018", "KOTA DUTA",              628, 120, "SG",   8244,  2656),
+    # ── K-E ─────────────────────────────────────────────────────
+    ("563000017", "9900019", "KOTA EAGLE",           14450, 400, "SG", 156620, 79406),
+    ("563000018", "9900020", "KOTA EBONY",           14450, 400, "SG", 156597, 79406),
+    ("563000019", "9900021", "KOTA EMBUN",           14410, 399, "SG", 156517, 79406),
+    ("563000020", "9900022", "KOTA EMERALD",         14450, 400, "SG", 156620, 79406),
+    # ── K-G ─────────────────────────────────────────────────────
+    ("563000021", "9900023", "KOTA GABUNG",           2754, 215, "SG",  39572, 13359),
+    ("563000022", "9900024", "KOTA GADANG",           2800, 215, "SG",  39598, 13359),
+    ("563000023", "9900025", "KOTA GANDING",          2800, 215, "SG",  39598, 13359),
+    ("563000024", "9900026", "KOTA GAYA",             2754, 215, "SG",  39598, 13359),
+    # ── K-H ─────────────────────────────────────────────────────
+    ("563000025", "9900027", "KOTA HAKIM",            1080, 152, "SG",  18830,  7314),
+    ("563000026", "9900028", "KOTA HALUS",            1080, 152, "SG",  18872,  7314),
+    ("563000027", "9900029", "KOTA HANDAL",           1080, 152, "SG",  18855,  7314),
+    ("563000028", "9900030", "KOTA HAPAS",            1080, 152, "SG",  13491,  7314),
+    ("563000029", "9900031", "KOTA HARUM",            1080, 152, "SG",  18870,  7314),
+    ("563000030", "9900032", "KOTA HENING",           1080, 152, "SG",  18871,  7314),
+    ("563000031", "9900033", "KOTA HIDAYAH",          1170, 158, "SG",  17296,  5823),
+    # ── K-J ─────────────────────────────────────────────────────
+    ("563000032", "9900034", "KOTA JAYA",             1728, 182, "SG",  24921,  9413),
+    ("563000033", "9900035", "KOTA JOHAN",            2034, 192, "SG",  24146,  7279),
+    # ── K-K ─────────────────────────────────────────────────────
+    ("563000034", "9900036", "KOTA KAMIL",            3081, 228, "SG",  39782, 15648),
+    ("563000035", "9900037", "KOTA KARIM",            3081, 228, "SG",  39763, 15648),
+    ("563000036", "9900038", "KOTA KAYA",             3081, 228, "SG",  39932, 15648),
+    # ── K-L ─────────────────────────────────────────────────────
+    ("563000037", "9900039", "KOTA LAMBAI",           4253, 260, "SG",  50595, 24504),
+    ("563000038", "9900040", "KOTA LAMBANG",          4253, 260, "SG",  50595, 24504),
+    ("563000039", "9900041", "KOTA LARIS",            4253, 260, "SG",  50638, 24504),
+    ("563000040", "9900042", "KOTA LAWA",             4253, 260, "SG",  50638, 24504),
+    ("563000041", "9900043", "KOTA LAYANG",           4253, 260, "SG",  50594, 24504),
+    ("563000042", "9900044", "KOTA LEGIT",            4800, 282, "SG",  57778, 20270),
+    ("563000043", "9900045", "KOTA LEKAS",            4800, 282, "SG",  57712, 20270),
+    ("563000044", "9900046", "KOTA LEMBAH",           4335, 262, "SG",  51822, 23676),
+    ("563000045", "9900047", "KOTA LESTARI",          4335, 262, "SG",  51822, 23676),
+    ("563000046", "9900048", "KOTA LIHAT",            4335, 262, "SG",  51768, 23676),
+    ("636000002", "9900049", "KOTA LIMA",             5544, 295, "LR",  67197, 27512),
+    ("563000047", "9900050", "KOTA LOCENG",           4335, 262, "SG",  51822, 23676),
+    ("563000048", "9900051", "KOTA LUMAYAN",          4253, 260, "SG",  50745, 24504),
+    ("477000001", "9900052", "KOTA LUMBAH",           4253, 260, "HK",  50603, 24504),
+    # ── K-M ─────────────────────────────────────────────────────
+    ("563000049", "9900053", "KOTA MACHAN",           3566, 240, "SG",  45361, 13856),
+    ("477000002", "9900054", "KOTA MAKMUR",           3566, 240, "HK",  45349, 13856),
+    ("563000050", "9900055", "KOTA MANIS",            3566, 240, "SG",  45349, 13856),
+    ("636000003", "9900056", "KOTA MANZANILLO",       8533, 335, "LR", 103378, 56693),
+    ("563000051", "9900057", "KOTA MEGAH",            3566, 240, "SG",  45349, 13856),
+    # ── K-N ─────────────────────────────────────────────────────
+    ("563000052", "9900058", "KOTA NABIL",            1810, 185, "SG",  25985,  9119),
+    ("563000053", "9900059", "KOTA NAGA",             1810, 185, "SG",  25985,  9121),
+    ("563000054", "9900060", "KOTA NALURI",           1810, 185, "SG",  25985,  9111),
+    ("563000055", "9900061", "KOTA NANHAI",           1810, 185, "SG",  25985,  9123),
+    ("563000056", "9900062", "KOTA NASRAT",           1810, 185, "SG",  25985,  9119),
+    ("563000057", "9900063", "KOTA NAZAR",            1810, 185, "SG",  25985,  9112),
+    ("563000058", "9900064", "KOTA NAZIM",            1810, 185, "SG",  25985,  9114),
+    ("563000059", "9900065", "KOTA NEBULA",           1810, 185, "SG",  25985,  9118),
+    ("352000001", "9900066", "KOTA NEKAD",            1810, 185, "PA",  25985,  9123),
+    ("563000060", "9900067", "KOTA NILAM",            1810, 185, "SG",  25985,  9118),
+    ("563000061", "9900068", "KOTA NIPAH",            1810, 185, "SG",  25943,  9121),
+    # ── K-O ─────────────────────────────────────────────────────
+    ("563000062", "9900069", "KOTA OASIS",            8350, 335, "SG",  98626, 41812),
+    ("563000063", "9900070", "KOTA OCEAN",            8350, 335, "SG",  98626, 41812),
+    ("563000064", "9900071", "KOTA ODYSSEY",          8350, 335, "SG",  98112, 41812),
+    ("563000065", "9900072", "KOTA ORKID",            8350, 335, "SG",  98080, 41812),
+    # ── K-P ─────────────────────────────────────────────────────
+    ("563000066", "9900073", "KOTA PAHLAWAN",        11923, 366, "SG", 132646, 62816),
+    ("563000067", "9900074", "KOTA PELANGI",         11923, 366, "SG", 132623, 62816),
+    ("636000004", "9900075", "KOTA PEONY",           13082, 383, "LR", 141203, 63565),
+    ("239000001", "9900076", "KOTA PLUMBAGO",        13082, 383, "GR", 142117, 63565),
+    ("636000005", "9900077", "KOTA PRIMROSE",        13082, 383, "LR", 141550, 63565),
+    ("477000003", "9900078", "KOTA PURI",            11923, 366, "HK", 132586, 63895),
+    ("477000004", "9900079", "KOTA PUSAKA",          11923, 366, "HK", 132586, 63895),
+    # ── K-R ─────────────────────────────────────────────────────
+    ("563000068", "9900080", "KOTA RAHMAT",            907, 145, "SG",  12985,  4512),
+    ("563000069", "9900081", "KOTA RAJA",              777, 138, "SG",  13060,  4537),
+    ("563000070", "9900082", "KOTA RAJIN",             938, 145, "SG",  13212,  4558),
+    ("563000071", "9900083", "KOTA RAKAN",             907, 145, "SG",  12997,  4512),
+    ("563000072", "9900084", "KOTA RAKYAT",            907, 145, "SG",  13001,  4512),
+    ("563000073", "9900085", "KOTA RANCAK",            943, 145, "SG",  13260,  4558),
+    ("563000074", "9900086", "KOTA RATNA",             777, 138, "SG",  13055,  4537),
+    ("563000075", "9900087", "KOTA RATU",              777, 138, "SG",  13064,  4537),
+    ("563000076", "9900088", "KOTA RESTU",             943, 145, "SG",  13194,  4558),
+    ("563000077", "9900089", "KOTA RIA",               907, 145, "SG",  13017,  4512),
+    ("563000078", "9900090", "KOTA RUKUN",             777, 138, "SG",  13058,  4537),
+    # ── K-S ─────────────────────────────────────────────────────
+    ("563000079", "9900091", "KOTA SABAS",            3889, 252, "SG",  51739, 22321),
+    ("563000080", "9900092", "KOTA SAHABAT",          3889, 252, "SG",  51739, 22321),
+    ("563000081", "9900093", "KOTA SALAM",            3889, 252, "SG",  51739, 22321),
+    ("636000006", "9900094", "KOTA SANTOS",           8463, 335, "LR", 106936, 59328),
+    ("563000082", "9900095", "KOTA SATRIA",           3889, 252, "SG",  51755, 22321),
+    ("563000083", "9900096", "KOTA SEGAR",            3889, 252, "SG",  51739, 22321),
+    ("563000084", "9900097", "KOTA SEJARAH",          3889, 252, "SG",  51755, 22321),
+    ("563000085", "9900098", "KOTA SEJATI",           3889, 252, "SG",  51755, 22321),
+    ("563000086", "9900099", "KOTA SELAMAT",          3889, 252, "SG",  51755, 22321),
+    ("563000087", "9900100", "KOTA SEMPENA",          3889, 252, "SG",  51755, 22321),
+    ("563000088", "9900101", "KOTA SETIA",            3889, 252, "SG",  51755, 22321),
+    ("563000089", "9900102", "KOTA SINGA",            3889, 252, "SG",  51783, 22321),
+    ("563000090", "9900103", "KOTA SURIA",            3889, 252, "SG",  51790, 22321),
+    # ── K-T/V ───────────────────────────────────────────────────
+    ("563000091", "9900104", "KOTA SYDNEY",           7092, 320, "SG",  84900, 45182),
+    ("563000092", "9900105", "KOTA TEMA",             7092, 320, "SG",  86799, 45182),
+    ("563000093", "9900106", "KOTA TENAGA",            728, 130, "SG",  10700,  4145),
+    ("538000002", "9900107", "KOTA VALPARAISO",       7092, 320, "MH",  86793, 45182),
+    # ── Others ──────────────────────────────────────────────────
+    ("636000007", "9900108", "LITTLE MERMAID",        1781, 182, "LR",  24468,  8093),
+    ("533000001", "9900109", "SALAM MAJU",            1170, 158, "MY",  17324,  5823),
+    ("525000001", "9900110", "SELATAN DAMAI",          628, 120, "ID",   8150,  2656),
+    ("413000001", "9900111", "ZHONG HANG SHENG",      2783, 215, "CN",  35600, 12626),
 ]
 
-# PIL service port rotation
+# PIL service port rotations
 PIL_SERVICES = {
     "AEX1": ["SGSIN", "MYTPP", "LKCMB", "AEDXB", "SAJED", "EGPSD", "NLRTM", "DEHAM", "GBFXT", "BEANR"],
     "AEX2": ["SGSIN", "MYPKG", "INNSA", "INMAA", "AEDXB", "NLRTM", "DEHAM", "BEANR", "GBFXT"],
     "PSW":  ["SGSIN", "CNSHA", "CNNBO", "KRPUS", "USLAX", "USNYC"],
     "IAX":  ["SGSIN", "MYTPP", "THBKK", "VNSGN", "PHLIM", "IDTPP"],
+    "OCE":  ["SGSIN", "MYPGU", "AUBNE", "AUSYD", "NZAKL"],
+    "IPX":  ["SGSIN", "LKCMB", "PKPQG", "INNSA", "INMAA", "MYPKG"],
 }
+
+# Service assignment by TEU size
+_SERVICE_BY_TEU = [
+    (11000, ["AEX1", "AEX2"]),
+    (7000,  ["AEX1", "AEX2", "PSW"]),
+    (4000,  ["PSW", "OCE", "IPX"]),
+    (2000,  ["IAX", "IPX", "OCE"]),
+    (0,     ["IAX"]),
+]
+
+
+def _service_for(teu: int, idx: int) -> str:
+    for threshold, choices in _SERVICE_BY_TEU:
+        if teu >= threshold:
+            return choices[idx % len(choices)]
+    return "IAX"
 
 
 async def seed():
@@ -160,33 +300,48 @@ async def _seed_ports(db):
 
 async def _seed_vessel_calls():
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select, func
-        if (await db.execute(select(func.count(models.VesselCall.id)))).scalar() > 0:
+        from sqlalchemy import select, func, delete
+
+        # Check if full fleet already seeded (KOTA EAGLE is a new-generation vessel)
+        has_new_fleet = (await db.execute(
+            select(func.count(models.Vessel.mmsi)).where(models.Vessel.name == "KOTA EAGLE")
+        )).scalar() > 0
+
+        if has_new_fleet:
             return
 
-        print("Seeding PIL vessels and voyage calls...")
+        # Remove old placeholder vessels and their calls so we can re-seed
+        old_mmsis_q = select(models.Vessel.mmsi).where(models.Vessel.is_pil_vessel == True)
+        await db.execute(delete(models.VesselCall).where(models.VesselCall.mmsi.in_(old_mmsis_q)))
+        await db.execute(delete(models.Vessel).where(models.Vessel.is_pil_vessel == True))
+        await db.commit()
+
+        print(f"Seeding {len(PIL_VESSELS)} PIL vessels with voyage calls...")
         now = datetime.now(timezone.utc)
         port_map = {p.unlocode: p for p in (await db.execute(select(models.Port))).scalars().all()}
 
-        service_keys = list(PIL_SERVICES.keys())
+        # Seed all PIL vessels
         vessels = []
-        for mmsi, imo, name, teu, loa, flag in PIL_VESSELS:
+        for idx, (mmsi, imo, name, teu, loa, flag, gt, dwt) in enumerate(PIL_VESSELS):
+            svc = _service_for(teu, idx)
             v = models.Vessel(
                 mmsi=mmsi, imo=imo, name=name, vessel_type="Container Ship",
                 flag=flag, operator="Pacific International Lines",
-                loa_m=loa, teu_capacity=teu, is_pil_vessel=True,
-                service=service_keys[len(vessels) % len(service_keys)],
+                loa_m=loa, teu_capacity=teu, gt=gt, dwt=dwt,
+                is_pil_vessel=True, service=svc,
             )
             db.add(v)
-            vessels.append(v)
+            vessels.append((v, svc))
+
         await db.flush()
 
-        for idx, vessel in enumerate(vessels):
-            service = service_keys[idx % len(service_keys)]
-            voyage_num = f"PIL{service}{now.strftime('%y%m')}{idx+1:02d}"
-            voyage_start = now - timedelta(days=idx * 4)
+        # Generate voyage calls for each vessel
+        for idx, (vessel, service) in enumerate(vessels):
+            port_rotation = PIL_SERVICES[service]
+            voyage_num = f"PIL{service}{now.strftime('%y%m')}{idx + 1:03d}"
+            voyage_start = now - timedelta(days=(idx % 20) * 3)
 
-            for port_idx, unlocode in enumerate(PIL_SERVICES[service]):
+            for port_idx, unlocode in enumerate(port_rotation):
                 port = port_map.get(unlocode)
                 if not port:
                     continue
@@ -197,7 +352,7 @@ async def _seed_vessel_calls():
                 proforma_eta = voyage_start + timedelta(days=port_idx * 3)
                 proforma_etb = proforma_eta + timedelta(hours=random.uniform(2, 8))
                 proforma_etd = proforma_etb + timedelta(hours=random.uniform(18, 36))
-                delay_h = random.choice([0, 0, 0, 4, 8, 12, 24])
+                delay_h = random.choice([0, 0, 0, 0, 4, 8, 12, 24])
                 eta = proforma_eta + timedelta(hours=delay_h)
                 etb = proforma_etb + timedelta(hours=delay_h * 0.8)
                 etd = proforma_etd + timedelta(hours=delay_h * 0.5)
@@ -212,15 +367,15 @@ async def _seed_vessel_calls():
                     terminal_id=terminal.id if terminal else None,
                     voyage_number=voyage_num,
                     proforma_eta=proforma_eta, proforma_etb=proforma_etb, proforma_etd=proforma_etd,
-                    proforma_moves=random.randint(200, 800),
+                    proforma_moves=random.randint(200, 1200),
                     eta=eta, etb=etb, etd=etd,
-                    actual_moves=random.randint(150, 750) if status == models.VesselStatus.at_berth else None,
+                    actual_moves=random.randint(150, 1100) if status == models.VesselStatus.at_berth else None,
                     status=status,
                     delay_reason="Weather delay" if delay_h >= 12 else None,
                 ))
 
         await db.commit()
-        print(f"Seeded {len(vessels)} PIL vessels with realistic voyage calls.")
+        print(f"Seeded {len(PIL_VESSELS)} PIL vessels with voyage calls.")
 
 
 if __name__ == "__main__":
