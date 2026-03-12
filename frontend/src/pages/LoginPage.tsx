@@ -1,20 +1,19 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { Gauge, Eye, EyeOff } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 export default function LoginPage() {
   const { login, isAuthenticated } = useAuth()
-  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
 
+  // Declarative redirect — fires after state update is committed
   if (isAuthenticated) {
-    navigate('/dashboard', { replace: true })
-    return null
+    return <Navigate to="/dashboard" replace />
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -22,7 +21,8 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await login(email, password)
-      navigate('/dashboard', { replace: true })
+      // No navigate() here — the isAuthenticated check above handles it
+      // after React re-renders with the new auth state
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Login failed. Check your credentials.')
     } finally {
