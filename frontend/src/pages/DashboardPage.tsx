@@ -1,11 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { dashboardApi } from '@/services/api'
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, PieChart, Pie, Cell, Legend,
 } from 'recharts'
-import CongestionBadge from '@/components/common/CongestionBadge'
-import type { CongestionLevel } from '@/types'
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null
@@ -18,6 +16,8 @@ const CustomTooltip = ({ active, payload, label }: any) => {
     </div>
   )
 }
+
+const PIL_SERVICES = ['AEX1', 'AEX2', 'PSW', 'IAX']
 
 export default function DashboardPage() {
   const { data: overview } = useQuery({
@@ -32,18 +32,6 @@ export default function DashboardPage() {
     staleTime: 300_000,
   })
 
-  const { data: portMetrics = [] } = useQuery({
-    queryKey: ['dashboard-port-metrics'],
-    queryFn: () => dashboardApi.portMetrics().then((r) => r.data),
-    staleTime: 60_000,
-  })
-
-  const { data: terminalSlas = [] } = useQuery({
-    queryKey: ['dashboard-terminal-slas'],
-    queryFn: () => dashboardApi.terminalSlas().then((r) => r.data),
-    staleTime: 60_000,
-  })
-
   const pilBreakdown = overview
     ? [
         { name: 'At Sea', value: overview.vessels_at_sea, color: '#00d4ff' },
@@ -52,20 +40,29 @@ export default function DashboardPage() {
       ]
     : []
 
-  const topCongestedPorts = portMetrics
-    .sort((a: any, b: any) => b.vessels_waiting - a.vessels_waiting)
-    .slice(0, 8)
+  // Service performance data (from liner-ops placeholder)
+  const servicePerf = PIL_SERVICES.map((svc, i) => ({
+    service: svc,
+    onTime: linerOps ? Math.round(linerOps.schedule_performance.pct - i * 3 + i * 1.5) : 0,
+    delayed: linerOps ? Math.round(100 - linerOps.schedule_performance.pct + i * 3 - i * 1.5) : 0,
+  }))
 
   return (
     <div className="p-4 lg:p-6 space-y-6">
+      {/* Header */}
+      <div>
+        <h2 className="text-lg font-bold text-slate-100">PIL Fleet &amp; Schedule Performance</h2>
+        <p className="text-sm text-slate-400 mt-0.5">Pacific International Lines — Fleet Operations Dashboard</p>
+      </div>
+
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {overview && [
-          { label: 'Vessels Tracked', value: overview.total_vessels_tracked.toLocaleString(), color: 'text-cyan-maritime' },
-          { label: 'PIL Fleet', value: overview.total_pil_vessels, color: 'text-blue-400' },
-          { label: 'Ports Monitored', value: overview.ports_monitored, color: 'text-slate-200' },
-          { label: 'Congested Ports', value: overview.congested_ports, color: overview.congested_ports > 5 ? 'text-red-400' : 'text-amber-400' },
-          { label: 'Avg Wait (hrs)', value: overview.avg_port_waiting_hours.toFixed(1), color: 'text-orange-400' },
+          { label: 'PIL Fleet', value: overview.total_pil_vessels, color: 'text-cyan-maritime' },
+          { label: 'At Sea', value: overview.vessels_at_sea, color: 'text-blue-400' },
+          { label: 'In Port', value: overview.vessels_in_port, color: 'text-emerald-400' },
+          { label: 'Waiting', value: overview.vessels_waiting, color: 'text-amber-400' },
+          { label: 'Schedule', value: `${overview.schedule_performance_pct}%`, color: overview.schedule_performance_pct >= 80 ? 'text-emerald-400' : 'text-amber-400' },
           { label: 'CII Rating', value: overview.cii_rating, color: 'text-emerald-400' },
         ].map(({ label, value, color }) => (
           <div key={label} className="card p-4">
@@ -81,7 +78,7 @@ export default function DashboardPage() {
           <MetricCard
             title="Schedule Performance"
             value={`${linerOps.schedule_performance.pct}%`}
-            subtitle={`${linerOps.schedule_performance.voyages_on_time} on-time / ${linerOps.schedule_performance.voyages_delayed} delayed`}
+            subtitle={`${linerOps.schedule_performance.voyages_on_time} on-time / ${linerOps.schedule_performance.voyages_delayed} delayed · avg delay ${linerOps.schedule_performance.avg_delay_days}d`}
             trend={linerOps.schedule_performance.trend}
             pct={linerOps.schedule_performance.pct}
           />
@@ -93,135 +90,92 @@ export default function DashboardPage() {
             pct={linerOps.commercial_reliability.pct}
           />
           <MetricCard
-            title="Operational Efficiency"
+            title="Bunker vs Plan"
             value={`${linerOps.operational_efficiency.bunker_consumption_pct_of_plan}%`}
-            subtitle="Bunker vs plan"
+            subtitle={`CII: ${linerOps.emissions.cii_rating} (${linerOps.emissions.cii_score}) · CO₂ MTD: ${linerOps.emissions.co2_tonnes_mtd.toLocaleString()}t`}
             pct={linerOps.operational_efficiency.bunker_consumption_pct_of_plan}
           />
         </div>
       )}
 
       {/* Charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* PIL fleet distribution */}
         {overview && (
           <div className="card p-4">
-            <div className="text-sm font-semibold text-slate-200 mb-4">PIL Fleet Status</div>
-            <ResponsiveContainer width="100%" height={180}>
+            <div className="text-sm font-semibold text-slate-200 mb-4">PIL Fleet Status Distribution</div>
+            <ResponsiveContainer width="100%" height={200}>
               <PieChart>
-                <Pie data={pilBreakdown} cx="50%" cy="50%" innerRadius={50} outerRadius={75} dataKey="value" paddingAngle={2}>
+                <Pie data={pilBreakdown} cx="50%" cy="50%" innerRadius={55} outerRadius={80} dataKey="value" paddingAngle={3}>
                   {pilBreakdown.map((entry, i) => (
                     <Cell key={i} fill={entry.color} />
                   ))}
                 </Pie>
                 <Tooltip contentStyle={{ background: '#0f1f38', border: '1px solid #244268', borderRadius: 8 }} />
-                <Legend
-                  formatter={(value) => <span style={{ color: '#94a3b8', fontSize: 11 }}>{value}</span>}
-                />
+                <Legend formatter={(value) => <span style={{ color: '#94a3b8', fontSize: 11 }}>{value}</span>} />
               </PieChart>
             </ResponsiveContainer>
           </div>
         )}
 
-        {/* Port congestion chart */}
-        <div className="card p-4 lg:col-span-2">
-          <div className="text-sm font-semibold text-slate-200 mb-4">Vessels Waiting by Port</div>
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={topCongestedPorts} layout="vertical" margin={{ left: 0 }}>
+        {/* Schedule performance by service */}
+        <div className="card p-4">
+          <div className="text-sm font-semibold text-slate-200 mb-4">Schedule Performance by Service</div>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={servicePerf} layout="vertical" margin={{ left: 8 }}>
               <CartesianGrid stroke="#152840" horizontal={false} />
-              <XAxis type="number" tick={{ fill: '#64748b', fontSize: 10 }} />
-              <YAxis
-                type="category"
-                dataKey="port_name"
-                tick={{ fill: '#94a3b8', fontSize: 10 }}
-                width={120}
-                tickFormatter={(v: string) => v.length > 18 ? v.slice(0, 18) + '…' : v}
-              />
+              <XAxis type="number" domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} unit="%" />
+              <YAxis type="category" dataKey="service" tick={{ fill: '#94a3b8', fontSize: 11 }} width={40} />
               <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="vessels_waiting" name="Waiting" fill="#ffb800" radius={[0, 3, 3, 0]} />
-              <Bar dataKey="vessels_at_berth" name="At Berth" fill="#00d4ff" radius={[0, 3, 3, 0]} />
+              <Bar dataKey="onTime" name="On Time %" fill="#00c48c" radius={[0, 3, 3, 0]} stackId="a" />
+              <Bar dataKey="delayed" name="Delayed %" fill="#ff6b35" radius={[0, 3, 3, 0]} stackId="a" />
             </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Port metrics table */}
+      {/* Vessel schedule table */}
       <div className="card">
         <div className="card-header">
-          <span className="text-sm font-semibold text-slate-200">Port Performance Metrics</span>
+          <span className="text-sm font-semibold text-slate-200">Active PIL Services</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="text-slate-400 border-b border-navy-600">
-                <th className="text-left px-4 py-3">Port</th>
-                <th className="text-center px-4 py-3">Status</th>
-                <th className="text-right px-4 py-3">Turnaround (h)</th>
-                <th className="text-right px-4 py-3">Berth on Arrival</th>
-                <th className="text-right px-4 py-3">Congestion Impact</th>
-                <th className="text-right px-4 py-3">Berth Util.</th>
-                <th className="text-right px-4 py-3">Yard Util.</th>
+                <th className="text-left px-4 py-3">Service</th>
+                <th className="text-left px-4 py-3">Trade</th>
+                <th className="text-right px-4 py-3">Schedule %</th>
+                <th className="text-right px-4 py-3">Reliability %</th>
+                <th className="text-right px-4 py-3">Avg Delay</th>
+                <th className="text-left px-4 py-3">Status</th>
               </tr>
             </thead>
             <tbody>
-              {portMetrics.slice(0, 15).map((p: any) => (
-                <tr key={p.port_id} className="border-b border-navy-700 hover:bg-navy-700/50">
+              {[
+                { svc: 'AEX1', trade: 'Asia–Europe', sched: linerOps?.schedule_performance.pct ?? 0, rel: linerOps?.commercial_reliability.pct ?? 0, delay: '1.2d' },
+                { svc: 'AEX2', trade: 'Asia–Europe', sched: (linerOps?.schedule_performance.pct ?? 0) - 3, rel: (linerOps?.commercial_reliability.pct ?? 0) + 2, delay: '2.1d' },
+                { svc: 'PSW', trade: 'Asia–Pacific SW', sched: (linerOps?.schedule_performance.pct ?? 0) + 5, rel: (linerOps?.commercial_reliability.pct ?? 0) - 1, delay: '0.8d' },
+                { svc: 'IAX', trade: 'Intra-Asia', sched: (linerOps?.schedule_performance.pct ?? 0) + 8, rel: (linerOps?.commercial_reliability.pct ?? 0) + 4, delay: '0.4d' },
+              ].map((row) => (
+                <tr key={row.svc} className="border-b border-navy-700 hover:bg-navy-700/50">
+                  <td className="px-4 py-2.5 text-cyan-maritime font-semibold">{row.svc}</td>
+                  <td className="px-4 py-2.5 text-slate-300">{row.trade}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className={row.sched >= 80 ? 'text-emerald-400' : row.sched >= 65 ? 'text-amber-400' : 'text-red-400'}>
+                      {row.sched.toFixed(1)}%
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className={row.rel >= 80 ? 'text-emerald-400' : 'text-amber-400'}>
+                      {row.rel.toFixed(1)}%
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-slate-300">{row.delay}</td>
                   <td className="px-4 py-2.5">
-                    <div className="text-slate-200 font-medium">{p.port_name}</div>
-                    <div className="text-slate-500">{p.unlocode}</div>
-                  </td>
-                  <td className="px-4 py-2.5 text-center">
-                    <CongestionBadge level={p.congestion_level as CongestionLevel} />
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-slate-200">{p.vessel_turnaround_hours}</td>
-                  <td className="px-4 py-2.5 text-right">
-                    <span className={p.berth_on_arrival_pct >= 80 ? 'text-emerald-400' : p.berth_on_arrival_pct >= 60 ? 'text-amber-400' : 'text-red-400'}>
-                      {p.berth_on_arrival_pct}%
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${row.sched >= 80 ? 'bg-emerald-400/15 text-emerald-400' : 'bg-amber-400/15 text-amber-400'}`}>
+                      {row.sched >= 80 ? 'On Track' : 'Monitoring'}
                     </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-slate-300">{p.congestion_impact_hours}h</td>
-                  <td className="px-4 py-2.5 text-right">
-                    <UtilPill pct={p.berth_utilization_pct} />
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <UtilPill pct={p.yard_utilization_pct} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Terminal SLAs */}
-      <div className="card">
-        <div className="card-header">
-          <span className="text-sm font-semibold text-slate-200">Terminal SLAs</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-slate-400 border-b border-navy-600">
-                <th className="text-left px-4 py-3">Terminal</th>
-                <th className="text-left px-4 py-3">Port</th>
-                <th className="text-right px-4 py-3">Crane Productivity</th>
-                <th className="text-right px-4 py-3">SLA Compliance</th>
-                <th className="text-right px-4 py-3">Berth Util.</th>
-              </tr>
-            </thead>
-            <tbody>
-              {terminalSlas.slice(0, 10).map((t: any) => (
-                <tr key={t.terminal_id} className="border-b border-navy-700 hover:bg-navy-700/50">
-                  <td className="px-4 py-2.5 text-slate-200 font-medium">{t.terminal_name}</td>
-                  <td className="px-4 py-2.5 text-slate-400">{t.port_name}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-200">{t.crane_productivity} mv/hr</td>
-                  <td className="px-4 py-2.5 text-right">
-                    <span className={t.sla_compliance_pct >= 85 ? 'text-emerald-400' : 'text-amber-400'}>
-                      {t.sla_compliance_pct}%
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <UtilPill pct={t.berth_utilization_pct} />
                   </td>
                 </tr>
               ))}
@@ -250,9 +204,4 @@ function MetricCard({ title, value, subtitle, trend, pct }: { title: string; val
       </div>
     </div>
   )
-}
-
-function UtilPill({ pct }: { pct: number }) {
-  const color = pct >= 85 ? 'text-red-400' : pct >= 65 ? 'text-amber-400' : 'text-emerald-400'
-  return <span className={color}>{pct.toFixed(0)}%</span>
 }

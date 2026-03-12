@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
-  Map, Anchor, BarChart3, Ship, Grid3X3, AlertTriangle, LogOut, Gauge
+  Map, Anchor, BarChart3, Ship, Grid3X3, AlertTriangle, LogOut, Gauge, TrendingUp
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useVesselStore } from '@/store/vesselStore'
@@ -12,7 +12,8 @@ const NAV = [
   { to: '/vessels', icon: Ship, label: 'Vessels' },
   { to: '/terminal-lineup', icon: Grid3X3, label: 'Terminal Lineup' },
   { to: '/congestion', icon: AlertTriangle, label: 'Congestion' },
-  { to: '/dashboard', icon: BarChart3, label: 'Dashboard' },
+  { to: '/dashboard', icon: BarChart3, label: 'Fleet & Schedule' },
+  { to: '/port-performance', icon: TrendingUp, label: 'Port Performance' },
 ]
 
 export default function Sidebar() {

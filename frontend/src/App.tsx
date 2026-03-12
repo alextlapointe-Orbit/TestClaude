@@ -9,6 +9,7 @@ import MapPage from '@/pages/MapPage'
 import PortsPage from '@/pages/PortsPage'
 import PortDetailPage from '@/pages/PortDetailPage'
 import DashboardPage from '@/pages/DashboardPage'
+import PortPerformancePage from '@/pages/PortPerformancePage'
 import VesselsPage from '@/pages/VesselsPage'
 import TerminalLineupPage from '@/pages/TerminalLineupPage'
 import CongestionPage from '@/pages/CongestionPage'
@@ -59,6 +60,7 @@ export default function App() {
         <Route path="ports/:id" element={<PortDetailPage />} />
         <Route path="vessels" element={<VesselsPage />} />
         <Route path="dashboard" element={<DashboardPage />} />
+        <Route path="port-performance" element={<PortPerformancePage />} />
         <Route path="terminal-lineup" element={<TerminalLineupPage />} />
         <Route path="congestion" element={<CongestionPage />} />
       </Route>

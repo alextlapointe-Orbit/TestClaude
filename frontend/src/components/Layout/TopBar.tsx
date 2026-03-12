@@ -10,7 +10,8 @@ const PAGE_TITLES: Record<string, string> = {
   '/vessels': 'Vessel Tracking',
   '/terminal-lineup': 'Terminal Line-Up',
   '/congestion': 'Congestion Intelligence',
-  '/dashboard': 'Operations Dashboard',
+  '/dashboard': 'Fleet & Schedule',
+  '/port-performance': 'Port Performance',
 }
 
 export default function TopBar() {
