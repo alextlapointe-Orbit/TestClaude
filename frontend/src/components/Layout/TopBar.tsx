@@ -42,7 +42,7 @@ export default function TopBar() {
               <span className={`w-1.5 h-1.5 rounded-full ${congested > 5 ? 'bg-red-400' : congested > 2 ? 'bg-amber-400' : 'bg-emerald-400'}`} />
               {congested} congested ports
             </span>
-            <span>{format(new Date(), 'HH:mm UTC')}</span>
+            <span>{format(new Date(), "HH:mm 'UTC'")}</span>
           </>
         )}
       </div>
