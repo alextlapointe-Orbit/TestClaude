@@ -165,7 +165,7 @@ export default function MapPage() {
       <div ref={mapContainer} className="absolute inset-0" />
 
       {/* No mapbox token message */}
-      {!config?.mapbox_token && (
+      {config !== null && !config.mapbox_token && (
         <div className="absolute inset-0 flex items-center justify-center bg-navy-900/90 z-10">
           <div className="text-center max-w-sm p-6 bg-navy-800 border border-navy-500 rounded-xl">
             <div className="text-amber-400 text-4xl mb-3">🗺️</div>

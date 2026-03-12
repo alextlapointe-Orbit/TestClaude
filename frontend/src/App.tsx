@@ -32,7 +32,14 @@ export default function App() {
   const { setConfig } = useConfigStore()
 
   useEffect(() => {
-    configApi.get().then((r) => setConfig(r.data)).catch(() => {})
+    let cancelled = false
+    function fetchConfig() {
+      configApi.get()
+        .then((r) => { if (!cancelled) setConfig(r.data) })
+        .catch(() => { if (!cancelled) setTimeout(fetchConfig, 4000) })
+    }
+    fetchConfig()
+    return () => { cancelled = true }
   }, [setConfig])
 
   return (
