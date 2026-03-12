@@ -27,7 +27,17 @@ PROJECT_ROOT = Path(__file__).parent.parent
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    # Retry DB init — Render free-tier DB may need a moment to wake up
+    for attempt in range(10):
+        try:
+            await init_db()
+            break
+        except Exception as e:
+            logger.warning(f"DB init attempt {attempt+1} failed: {e}")
+            if attempt < 9:
+                await asyncio.sleep(3)
+            else:
+                raise
     try:
         from seed_data import seed
         await seed()
@@ -76,6 +86,30 @@ async def get_config():
         "mapbox_token": settings.MAPBOX_TOKEN,
         "app_name": settings.APP_NAME,
     }
+
+
+@app.get("/api/health")
+async def health_check():
+    from database import AsyncSessionLocal
+    from sqlalchemy import select, func
+    try:
+        async with AsyncSessionLocal() as db:
+            user_count = (await db.execute(select(func.count(models.User.id)))).scalar()
+            port_count = (await db.execute(select(func.count(models.Port.id)))).scalar()
+        return {"status": "ok", "db_connected": True, "user_count": user_count, "port_count": port_count}
+    except Exception as e:
+        return {"status": "error", "db_connected": False, "error": str(e)}
+
+
+@app.post("/api/seed")
+async def force_seed():
+    """Force re-seed the database. Safe to call if seed was skipped on startup."""
+    from seed_data import seed
+    try:
+        await seed()
+        return {"status": "ok", "message": "Seed completed"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.websocket("/ws/ais")
