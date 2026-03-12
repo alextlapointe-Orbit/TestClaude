@@ -13,7 +13,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
 
   if (isAuthenticated) {
-    navigate('/map', { replace: true })
+    navigate('/dashboard', { replace: true })
     return null
   }
 
@@ -22,7 +22,7 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await login(email, password)
-      navigate('/map', { replace: true })
+      navigate('/dashboard', { replace: true })
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Login failed. Check your credentials.')
     } finally {
