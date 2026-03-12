@@ -38,8 +38,7 @@ class Calculator:
         """
         if b == 0:
             raise ValueError("Cannot divide by zero")
-        # BUG: the result is computed incorrectly — can you spot it?
-        result = a * b
+        result = a / b
         self.history.append(f"{a} / {b} = {result}")
         return result
 
