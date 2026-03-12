@@ -1,7 +1,7 @@
 # Learn Claude Code
 
-A small Python project designed to help you learn [Claude Code](https://claude.ai/code) —
-Anthropic's AI-powered CLI for software development.
+A project for learning [Claude Code](https://claude.ai/code) — and for running a
+real demo app that showcases Claude's streaming, tool use, and agentic capabilities.
 
 ## Structure
 
@@ -9,25 +9,48 @@ Anthropic's AI-powered CLI for software development.
 TestClaude/
 ├── CLAUDE.md               ← Instructions Claude reads automatically
 ├── README.md               ← This file
+├── start.sh                ← Starts both servers with one command
 ├── src/
-│   ├── calculator.py       ← Simple calculator (contains a bug!)
-│   └── todo.py             ← Todo list manager
-└── tests/
-    ├── test_calculator.py  ← Tests for the calculator
-    └── test_todo.py        ← Tests for the todo manager
+│   ├── calculator.py       ← Calculator class (used by the demo app as a tool)
+│   └── todo.py             ← TodoManager class (used by the demo app as a tool)
+├── tests/
+│   ├── test_calculator.py
+│   └── test_todo.py
+├── backend/                ← FastAPI + Anthropic SDK
+│   ├── main.py             ← Streaming chat, agentic tool loop, SQLite storage
+│   ├── requirements.txt
+│   └── .env.example
+└── frontend/               ← React + Vite
+    ├── src/
+    │   ├── App.jsx
+    │   └── components/
+    │       ├── ChatPanel.jsx   ← SSE streaming + tool call display
+    │       ├── Message.jsx     ← Renders text blocks + tool call blocks
+    │       └── Sidebar.jsx     ← Conversation history
+    └── package.json
 ```
 
-## Quick Start
+## Quick Start — Demo App
 
 ```bash
-# Install pytest if you don't have it
+# 1. Set your API key
+echo "ANTHROPIC_API_KEY=sk-ant-..." > backend/.env
+
+# 2. Install dependencies
+pip install -r backend/requirements.txt
+cd frontend && npm install && cd ..
+
+# 3. Launch (both servers)
+./start.sh
+# → open http://localhost:5173
+```
+
+## Quick Start — Learning Exercises
+
+```bash
 pip install pytest
-
-# Run all tests (some will fail — that's intentional!)
-python -m pytest tests/ -v
-
-# Run the todo demo
-python -m src.todo
+python -m pytest tests/ -v      # run tests
+python -m src.todo               # run the todo demo
 ```
 
 ## Learning Exercises
