@@ -24,7 +24,7 @@ export default function LoginPage() {
       // No navigate() here — the isAuthenticated check above handles it
       // after React re-renders with the new auth state
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Login failed. Check your credentials.')
+      const detail = err.response?.data?.detail; toast.error(Array.isArray(detail) ? 'Login failed. Check your credentials.' : (detail || 'Login failed. Check your credentials.'))
     } finally {
       setLoading(false)
     }
