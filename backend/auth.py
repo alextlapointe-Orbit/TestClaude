@@ -2,9 +2,9 @@ import hmac
 import hashlib
 import base64
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +13,10 @@ from config import settings
 from database import get_db
 import models
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# PBKDF2-SHA256 password hashing (stdlib only, no bcrypt/passlib compatibility issues)
+_ITERATIONS = 260_000
+_SALT_LEN = 16
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
@@ -60,12 +63,23 @@ def decode_token(token: str) -> dict:
         raise ValueError(str(e))
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
-
-
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    """Hash a password with PBKDF2-SHA256 + random salt (stdlib only)."""
+    salt = os.urandom(_SALT_LEN)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _ITERATIONS)
+    return base64.b64encode(salt + key).decode("ascii")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify password against a stored PBKDF2-SHA256 hash."""
+    try:
+        data = base64.b64decode(hashed_password.encode("ascii"))
+        salt = data[:_SALT_LEN]
+        stored_key = data[_SALT_LEN:]
+        key = hashlib.pbkdf2_hmac("sha256", plain_password.encode("utf-8"), salt, _ITERATIONS)
+        return hmac.compare_digest(key, stored_key)
+    except Exception:
+        return False
 
 
 async def get_user_by_email(db: AsyncSession, email: str) -> Optional[models.User]:
