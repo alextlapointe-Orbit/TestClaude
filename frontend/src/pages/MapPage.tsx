@@ -18,19 +18,31 @@ const CONGESTION_COLORS: Record<string, string> = {
   critical: '#ff4757',
 }
 
-// Boat icons — larger SVG, pointing north, rotated by vessel course
-const BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <polygon points="16,2 26,28 16,21 6,28" fill="#93c5fd" stroke="#1e3a5f" stroke-width="1.5"/>
+// Boat icons — pointing north (bow up), rotated by vessel course
+// Regular container ship: steel blue
+const BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">
+  <polygon points="14,2 23,25 14,19 5,25" fill="#4a9eff" stroke="#0d2a4a" stroke-width="1.5" opacity="0.9"/>
 </svg>`
 
-const PIL_BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-  <polygon points="20,2 32,36 20,27 8,36" fill="#00d4ff" stroke="#003d5c" stroke-width="2"/>
-  <text x="20" y="22" text-anchor="middle" font-size="8" font-weight="bold" fill="#001f33" font-family="sans-serif">PIL</text>
+// PIL vessel: amber/gold — stands out clearly against dark ocean and blue containers
+const PIL_BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+  <circle cx="22" cy="22" r="20" fill="#f59e0b" opacity="0.18"/>
+  <polygon points="22,3 34,38 22,28 10,38" fill="#f59e0b" stroke="#7c4a00" stroke-width="1.5"/>
+  <text x="22" y="25" text-anchor="middle" font-size="7" font-weight="bold" fill="#1a0a00" font-family="sans-serif" letter-spacing="0.5">PIL</text>
 </svg>`
 
-const SELECTED_BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <circle cx="16" cy="16" r="15" fill="none" stroke="#ffffff" stroke-width="2" stroke-dasharray="4 2" opacity="0.7"/>
-  <polygon points="16,2 26,28 16,21 6,28" fill="#ffffff" stroke="#1e3a5f" stroke-width="1.5"/>
+// Selected vessel: white + dashed ring
+const SELECTED_BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+  <circle cx="18" cy="18" r="17" fill="none" stroke="#ffffff" stroke-width="2" stroke-dasharray="4 2" opacity="0.8"/>
+  <polygon points="18,3 28,31 18,22 8,31" fill="#ffffff" stroke="#1a3a5c" stroke-width="1.5"/>
+</svg>`
+
+// Selected PIL vessel: amber + dashed ring
+const PIL_SELECTED_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <circle cx="24" cy="24" r="22" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-dasharray="5 3" opacity="0.9"/>
+  <circle cx="24" cy="24" r="22" fill="#f59e0b" opacity="0.12"/>
+  <polygon points="24,4 37,42 24,31 11,42" fill="#f59e0b" stroke="#7c4a00" stroke-width="1.5"/>
+  <text x="24" y="28" text-anchor="middle" font-size="8" font-weight="bold" fill="#1a0a00" font-family="sans-serif" letter-spacing="0.5">PIL</text>
 </svg>`
 
 function svgToImageData(svg: string, size: number): Promise<ImageData> {
@@ -109,14 +121,16 @@ export default function MapPage() {
 
       // Load boat icons
       try {
-        const [boatData, pilData, selData] = await Promise.all([
-          svgToImageData(BOAT_SVG, 32),
-          svgToImageData(PIL_BOAT_SVG, 40),
-          svgToImageData(SELECTED_BOAT_SVG, 32),
+        const [boatData, pilData, selData, pilSelData] = await Promise.all([
+          svgToImageData(BOAT_SVG, 28),
+          svgToImageData(PIL_BOAT_SVG, 44),
+          svgToImageData(SELECTED_BOAT_SVG, 36),
+          svgToImageData(PIL_SELECTED_SVG, 48),
         ])
         m.addImage('boat', boatData)
         m.addImage('boat-pil', pilData)
         m.addImage('boat-selected', selData)
+        m.addImage('boat-pil-selected', pilSelData)
       } catch {}
 
       // ── PORT LAYERS (GeoJSON — moves perfectly with map) ─────────────────
@@ -202,7 +216,21 @@ export default function MapPage() {
         data: { type: 'FeatureCollection', features: [] },
       })
 
-      // Regular (non-PIL, non-selected) vessels
+      // PIL glow halo (amber circle behind each PIL vessel — renders before icons)
+      m.addLayer({
+        id: 'vessels-pil-glow',
+        type: 'circle',
+        source: 'vessels',
+        filter: ['all', ['get', 'pil'], ['!', ['get', 'selected']]],
+        paint: {
+          'circle-radius': 14,
+          'circle-color': '#f59e0b',
+          'circle-opacity': 0.18,
+          'circle-blur': 1.2,
+        },
+      })
+
+      // Regular container ships (blue, small)
       m.addLayer({
         id: 'vessels-layer',
         type: 'symbol',
@@ -210,16 +238,16 @@ export default function MapPage() {
         filter: ['all', ['!', ['get', 'pil']], ['!', ['get', 'selected']]],
         layout: {
           'icon-image': 'boat',
-          'icon-size': 0.9,
+          'icon-size': 1.0,
           'icon-rotate': ['get', 'course'],
           'icon-rotation-alignment': 'map',
           'icon-allow-overlap': true,
           'icon-ignore-placement': true,
         },
-        paint: { 'icon-opacity': 0.85 },
+        paint: { 'icon-opacity': 0.8 },
       })
 
-      // PIL vessels (larger, cyan, always on top)
+      // PIL vessels (amber/gold, larger, always on top of regular ships)
       m.addLayer({
         id: 'vessels-pil-layer',
         type: 'symbol',
@@ -227,16 +255,16 @@ export default function MapPage() {
         filter: ['all', ['get', 'pil'], ['!', ['get', 'selected']]],
         layout: {
           'icon-image': 'boat-pil',
-          'icon-size': 0.85,
+          'icon-size': 1.0,
           'icon-rotate': ['get', 'course'],
           'icon-rotation-alignment': 'map',
           'icon-allow-overlap': true,
           'icon-ignore-placement': true,
         },
-        paint: { 'icon-opacity': 0.95 },
+        paint: { 'icon-opacity': 1.0 },
       })
 
-      // PIL vessel name labels (always visible on world map)
+      // PIL vessel name labels
       m.addLayer({
         id: 'vessels-pil-labels',
         type: 'symbol',
@@ -245,28 +273,28 @@ export default function MapPage() {
         layout: {
           'text-field': ['get', 'name'],
           'text-size': 9,
-          'text-offset': [0, 2.2],
+          'text-offset': [0, 2.4],
           'text-anchor': 'top',
           'text-allow-overlap': false,
           'text-optional': true,
-          'text-max-width': 8,
+          'text-max-width': 10,
         },
         paint: {
-          'text-color': '#00d4ff',
-          'text-halo-color': '#061525',
-          'text-halo-width': 1.5,
+          'text-color': '#f59e0b',
+          'text-halo-color': '#030d1a',
+          'text-halo-width': 2,
         },
       })
 
-      // Selected vessel (white, ring, largest)
+      // Selected vessel (ring + bright icon)
       m.addLayer({
         id: 'vessels-selected-layer',
         type: 'symbol',
         source: 'vessels',
         filter: ['get', 'selected'],
         layout: {
-          'icon-image': ['case', ['get', 'pil'], 'boat-pil', 'boat-selected'],
-          'icon-size': ['case', ['get', 'pil'], 1.4, 1.6],
+          'icon-image': ['case', ['get', 'pil'], 'boat-pil-selected', 'boat-selected'],
+          'icon-size': 1.0,
           'icon-rotate': ['get', 'course'],
           'icon-rotation-alignment': 'map',
           'icon-allow-overlap': true,
@@ -448,6 +476,9 @@ export default function MapPage() {
       if (!source) return
 
       const filtered = getFilteredVessels().filter((v) => {
+        // Hide confirmed non-container vessels (pilot boats, tankers, etc.)
+        // Always show PIL vessels and confirmed container ships
+        if (!v.is_pil_vessel && v.vessel_type === 'Unknown') return false
         if (v.loa_m !== null && v.loa_m !== undefined && v.loa_m < 100) return false
         return true
       })
@@ -460,6 +491,7 @@ export default function MapPage() {
           properties: {
             mmsi: v.mmsi,
             name: v.name,
+            vessel_type: v.vessel_type,
             pil: v.is_pil_vessel,
             selected: v.mmsi === selectedMmsi,
             course: v.course ?? 0,

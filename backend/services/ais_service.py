@@ -22,6 +22,7 @@ Client-side filtering strategy:
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Set
 
@@ -70,11 +71,27 @@ NAV_STATUS = {
     0: "underway", 1: "at_anchor", 5: "moored", 8: "underway_sailing",
 }
 
-PIL_KEYWORDS = ["PIL", "PACIFIC INTERNATIONAL", "PAC INT"]
+# PIL vessel name detection — word-boundary rules to prevent false positives:
+#   "PIL KAOHSIUNG" → match  ✓
+#   "KOTA EAGLE"    → match  ✓  (all KOTA-series are PIL fleet)
+#   "PILOT LEWES"   → NO match ✗  (PIL followed by "OT", not a space or end)
+#   "PHILIPPINES"   → NO match ✗
+_PIL_RE = re.compile(
+    r'\bKOTA\b'                  # KOTA fleet (e.g. KOTA EAGLE, KOTA MANZANILLO)
+    r'|^PIL\s'                   # "PIL " at start (e.g. PIL KAOHSIUNG)
+    r'|\sPIL\s'                  # " PIL " surrounded by spaces
+    r'|PACIFIC\s+INTERNATIONAL'  # full company name
+    r'|\bPAC\s+INT\b',           # abbreviation PAC INT
+    re.IGNORECASE,
+)
 
 
 def _is_pil_vessel(name: str) -> bool:
-    return any(kw in (name or "").upper() for kw in PIL_KEYWORDS)
+    """
+    Return True only for confirmed PIL (Pacific International Lines) vessels.
+    Uses word-boundary matching to avoid false positives like 'PILOT LEWES'.
+    """
+    return bool(_PIL_RE.search((name or "").strip()))
 
 
 def _is_valid_vessel_mmsi(mmsi: str) -> bool:
@@ -239,13 +256,20 @@ async def _connect_and_stream():
                             continue
 
                 name = (meta.get("ShipName") or "").strip()
+                existing = _live_positions.get(mmsi, {})
+                is_pil = existing.get("is_pil_vessel", False) or _is_pil_vessel(name)
+                # Vessel type: keep confirmed type; PIL vessels are always container ships;
+                # unknown vessels stay "Unknown" until ShipStaticData confirms their type.
+                confirmed_type = existing.get("vessel_type", "Unknown")
+                if is_pil and confirmed_type == "Unknown":
+                    confirmed_type = "Container Ship"
                 pos_data = {
                     "mmsi": mmsi,
-                    "name": name or _live_positions.get(mmsi, {}).get("name", "Unknown"),
-                    "vessel_type": _live_positions.get(mmsi, {}).get("vessel_type", "Container Ship"),
-                    "flag": _live_positions.get(mmsi, {}).get("flag"),
-                    "operator": _live_positions.get(mmsi, {}).get("operator"),
-                    "is_pil_vessel": _live_positions.get(mmsi, {}).get("is_pil_vessel", False) or _is_pil_vessel(name),
+                    "name": name or existing.get("name", "Unknown"),
+                    "vessel_type": confirmed_type,
+                    "flag": existing.get("flag"),
+                    "operator": existing.get("operator"),
+                    "is_pil_vessel": is_pil,
                     "latitude": lat,
                     "longitude": lon,
                     "speed_knots": report.get("Sog"),
