@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from database import get_db
 import models
 import httpx
+import asyncio
 
 router = APIRouter(prefix="/api/weather", tags=["weather"])
 
@@ -80,3 +82,48 @@ async def get_port_weather(port_id: int, db: AsyncSession = Depends(get_db)):
         "weather_description": WMO_CODES.get(wmo_code, "Unknown"),
         "forecast": forecast,
     }
+
+
+async def _fetch_port_weather(client: httpx.AsyncClient, port_id: int, lat: float, lon: float, name: str):
+    url = (
+        f"https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        f"&current=temperature_2m,wind_speed_10m,wind_direction_10m,weather_code"
+        f"&hourly=wave_height,wind_speed_10m"
+        f"&wind_speed_unit=kmh&forecast_days=1&timezone=auto"
+    )
+    try:
+        resp = await client.get(url, timeout=8.0)
+        resp.raise_for_status()
+        data = resp.json()
+        current = data.get("current", {})
+        wave_heights = data.get("hourly", {}).get("wave_height", [])
+        wmo = current.get("weather_code", 0)
+        return {
+            "port_id": port_id,
+            "port_name": name,
+            "latitude": lat,
+            "longitude": lon,
+            "wind_speed_kmh": current.get("wind_speed_10m"),
+            "wind_direction_deg": current.get("wind_direction_10m"),
+            "wave_height_m": wave_heights[0] if wave_heights else None,
+            "weather_code": wmo,
+            "weather_description": WMO_CODES.get(wmo, "Unknown"),
+        }
+    except Exception:
+        return None
+
+
+@router.get("/all-ports")
+async def get_all_ports_weather(db: AsyncSession = Depends(get_db)):
+    """Current weather for all ports in parallel — used by the map weather overlay."""
+    result = await db.execute(
+        select(models.Port.id, models.Port.name, models.Port.latitude, models.Port.longitude)
+    )
+    ports = result.all()
+
+    async with httpx.AsyncClient() as client:
+        tasks = [_fetch_port_weather(client, p.id, p.latitude, p.longitude, p.name) for p in ports]
+        results = await asyncio.gather(*tasks)
+
+    return [r for r in results if r is not None]

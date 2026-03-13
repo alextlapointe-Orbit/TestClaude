@@ -172,13 +172,11 @@ export interface DashboardOverview {
   vessels_waiting: number
   congested_ports: number
   ports_monitored: number
-  schedule_performance_pct: number
-  commercial_reliability_pct: number
   avg_port_waiting_hours: number
   total_vessels_tracked: number
   avg_berth_utilization_pct: number
-  cii_rating: string
-  avg_bunker_efficiency: number
+  ais_connected: boolean
+  ais_vessels_live: number
 }
 
 export interface TerminalLineup {

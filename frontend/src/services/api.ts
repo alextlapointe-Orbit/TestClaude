@@ -84,6 +84,7 @@ export const vesselsApi = {
 
 export const weatherApi = {
   getPortWeather: (portId: number) => api.get(`/weather/${portId}`),
+  getAllPorts: () => api.get('/weather/all-ports'),
 }
 
 // ─── Congestion ────────────────────────────────────────────────────────────

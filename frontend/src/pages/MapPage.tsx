@@ -7,7 +7,8 @@ import { useConfigStore } from '@/store/configStore'
 import type { PortListItem } from '@/types'
 import VesselFilterPanel from '@/components/Map/VesselFilterPanel'
 import VesselDetailPanel from '@/components/Map/VesselDetailPanel'
-import { Filter } from 'lucide-react'
+import PortPanel from '@/components/Map/PortPanel'
+import { Filter, Cloud, CloudOff } from 'lucide-react'
 import clsx from 'clsx'
 
 const CONGESTION_COLORS: Record<string, string> = {
@@ -17,14 +18,19 @@ const CONGESTION_COLORS: Record<string, string> = {
   critical: '#ff4757',
 }
 
-// Boat SVG icons — pointing north, rotated by vessel course via Mapbox
-const BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">
-  <polygon points="10,1 16,17 10,13 4,17" fill="#93c5fd" stroke="#1e3a5f" stroke-width="1"/>
+// Boat icons — larger SVG, pointing north, rotated by vessel course
+const BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <polygon points="16,2 26,28 16,21 6,28" fill="#93c5fd" stroke="#1e3a5f" stroke-width="1.5"/>
 </svg>`
 
-const PIL_BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">
-  <polygon points="10,1 16,17 10,13 4,17" fill="#00d4ff" stroke="#003d5c" stroke-width="1"/>
-  <text x="10" y="11" text-anchor="middle" font-size="5" font-weight="bold" fill="#003d5c" font-family="sans-serif">PIL</text>
+const PIL_BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+  <polygon points="20,2 32,36 20,27 8,36" fill="#00d4ff" stroke="#003d5c" stroke-width="2"/>
+  <text x="20" y="22" text-anchor="middle" font-size="8" font-weight="bold" fill="#001f33" font-family="sans-serif">PIL</text>
+</svg>`
+
+const SELECTED_BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <circle cx="16" cy="16" r="15" fill="none" stroke="#ffffff" stroke-width="2" stroke-dasharray="4 2" opacity="0.7"/>
+  <polygon points="16,2 26,28 16,21 6,28" fill="#ffffff" stroke="#1e3a5f" stroke-width="1.5"/>
 </svg>`
 
 function svgToImageData(svg: string, size: number): Promise<ImageData> {
@@ -43,14 +49,28 @@ function svgToImageData(svg: string, size: number): Promise<ImageData> {
   })
 }
 
+// Fetch latest RainViewer radar timestamp
+async function getRainViewerUrl(): Promise<string | null> {
+  try {
+    const r = await fetch('https://api.rainviewer.com/public/weather-maps.json')
+    const d = await r.json()
+    const path = d?.radar?.past?.at(-1)?.path
+    if (!path) return null
+    return `https://tilecache.rainviewer.com${path}/256/{z}/{x}/{y}/2/1_1.png`
+  } catch {
+    return null
+  }
+}
+
 export default function MapPage() {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
-  const portMarkers = useRef<Map<number, mapboxgl.Marker>>(new Map())
   const rafPending = useRef(false)
 
   const [mapReady, setMapReady] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
+  const [weatherOn, setWeatherOn] = useState(false)
+  const [selectedPort, setSelectedPort] = useState<PortListItem | null>(null)
 
   const { config } = useConfigStore()
   const { getFilteredVessels, selectedMmsi, selectVessel, vessels } = useVesselStore()
@@ -63,13 +83,7 @@ export default function MapPage() {
 
   const { data: track } = useQuery({
     queryKey: ['vessel-track', selectedMmsi],
-    queryFn: () => vesselsApi.getTrack(selectedMmsi!, 48).then((r) => r.data),
-    enabled: !!selectedMmsi,
-  })
-
-  const { data: calls } = useQuery({
-    queryKey: ['vessel-calls', selectedMmsi],
-    queryFn: () => vesselsApi.getCalls(selectedMmsi!).then((r) => r.data),
+    queryFn: () => vesselsApi.getTrack(selectedMmsi!, 72).then((r) => r.data),
     enabled: !!selectedMmsi,
   })
 
@@ -91,44 +105,177 @@ export default function MapPage() {
 
     m.on('load', async () => {
       m.setPaintProperty('water', 'fill-color', '#061525')
-      m.setPaintProperty('water-shadow', 'fill-color', '#061525')
+      try { m.setPaintProperty('water-shadow', 'fill-color', '#061525') } catch {}
 
-      // Load boat icons into Mapbox
+      // Load boat icons
       try {
-        const [boatData, pilData] = await Promise.all([
-          svgToImageData(BOAT_SVG, 20),
-          svgToImageData(PIL_BOAT_SVG, 20),
+        const [boatData, pilData, selData] = await Promise.all([
+          svgToImageData(BOAT_SVG, 32),
+          svgToImageData(PIL_BOAT_SVG, 40),
+          svgToImageData(SELECTED_BOAT_SVG, 32),
         ])
         m.addImage('boat', boatData)
         m.addImage('boat-pil', pilData)
-      } catch {
-        // fallback: no icon loaded, symbols will be invisible - acceptable
+        m.addImage('boat-selected', selData)
+      } catch {}
+
+      // ── PORT LAYERS (GeoJSON — moves perfectly with map) ─────────────────
+      m.addSource('ports', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+
+      // Glow halo behind ports
+      m.addLayer({
+        id: 'ports-glow',
+        type: 'circle',
+        source: 'ports',
+        paint: {
+          'circle-radius': 14,
+          'circle-color': [
+            'match', ['get', 'congestion'],
+            'critical', '#ff4757', 'high', '#ff6b35', 'medium', '#ffb800', '#00c48c',
+          ],
+          'circle-opacity': 0.15,
+          'circle-blur': 1,
+        },
+      })
+
+      // Main port circle
+      m.addLayer({
+        id: 'ports-circles',
+        type: 'circle',
+        source: 'ports',
+        paint: {
+          'circle-radius': ['case', ['get', 'selected'], 12, 8],
+          'circle-color': [
+            'match', ['get', 'congestion'],
+            'critical', '#ff4757', 'high', '#ff6b35', 'medium', '#ffb800', '#00c48c',
+          ],
+          'circle-stroke-width': ['case', ['get', 'selected'], 2.5, 1.5],
+          'circle-stroke-color': ['case', ['get', 'selected'], '#ffffff', 'rgba(255,255,255,0.3)'],
+          'circle-opacity': ['case', ['get', 'selected'], 1.0, 0.9],
+        },
+      })
+
+      // Port name labels
+      m.addLayer({
+        id: 'ports-labels',
+        type: 'symbol',
+        source: 'ports',
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-size': 10,
+          'text-offset': [0, 1.4],
+          'text-anchor': 'top',
+          'text-allow-overlap': false,
+          'text-optional': true,
+        },
+        paint: {
+          'text-color': '#94a3b8',
+          'text-halo-color': '#0a1628',
+          'text-halo-width': 1.5,
+        },
+      })
+
+      // ── WEATHER LAYER (RainViewer precipitation tiles) ───────────────────
+      const radarUrl = await getRainViewerUrl()
+      if (radarUrl) {
+        m.addSource('weather-radar', {
+          type: 'raster',
+          tiles: [radarUrl],
+          tileSize: 256,
+          attribution: '© RainViewer',
+        })
+        m.addLayer({
+          id: 'weather-radar-layer',
+          type: 'raster',
+          source: 'weather-radar',
+          paint: { 'raster-opacity': 0.55 },
+          layout: { visibility: 'none' },
+        })
       }
 
-      // Vessel GeoJSON source + symbol layer (WebGL — handles thousands of vessels)
+      // ── VESSEL SOURCES ───────────────────────────────────────────────────
       m.addSource('vessels', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       })
 
+      // Regular (non-PIL, non-selected) vessels
       m.addLayer({
         id: 'vessels-layer',
         type: 'symbol',
         source: 'vessels',
+        filter: ['all', ['!', ['get', 'pil']], ['!', ['get', 'selected']]],
         layout: {
-          'icon-image': ['case', ['get', 'pil'], 'boat-pil', 'boat'],
-          'icon-size': ['case', ['get', 'selected'], 2.0, 1.2],
+          'icon-image': 'boat',
+          'icon-size': 0.9,
           'icon-rotate': ['get', 'course'],
           'icon-rotation-alignment': 'map',
           'icon-allow-overlap': true,
           'icon-ignore-placement': true,
         },
+        paint: { 'icon-opacity': 0.85 },
+      })
+
+      // PIL vessels (larger, cyan, always on top)
+      m.addLayer({
+        id: 'vessels-pil-layer',
+        type: 'symbol',
+        source: 'vessels',
+        filter: ['all', ['get', 'pil'], ['!', ['get', 'selected']]],
+        layout: {
+          'icon-image': 'boat-pil',
+          'icon-size': 0.85,
+          'icon-rotate': ['get', 'course'],
+          'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+        },
+        paint: { 'icon-opacity': 0.95 },
+      })
+
+      // PIL vessel name labels (always visible on world map)
+      m.addLayer({
+        id: 'vessels-pil-labels',
+        type: 'symbol',
+        source: 'vessels',
+        filter: ['get', 'pil'],
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-size': 9,
+          'text-offset': [0, 2.2],
+          'text-anchor': 'top',
+          'text-allow-overlap': false,
+          'text-optional': true,
+          'text-max-width': 8,
+        },
         paint: {
-          'icon-opacity': ['case', ['get', 'selected'], 1.0, 0.85],
+          'text-color': '#00d4ff',
+          'text-halo-color': '#061525',
+          'text-halo-width': 1.5,
         },
       })
 
-      // Vessel track line layer
+      // Selected vessel (white, ring, largest)
+      m.addLayer({
+        id: 'vessels-selected-layer',
+        type: 'symbol',
+        source: 'vessels',
+        filter: ['get', 'selected'],
+        layout: {
+          'icon-image': ['case', ['get', 'pil'], 'boat-pil', 'boat-selected'],
+          'icon-size': ['case', ['get', 'pil'], 1.4, 1.6],
+          'icon-rotate': ['get', 'course'],
+          'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+        },
+        paint: { 'icon-opacity': 1.0 },
+      })
+
+      // ── VESSEL TRACK ─────────────────────────────────────────────────────
       m.addSource('vessel-track', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -141,77 +288,96 @@ export default function MapPage() {
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
           'line-color': '#00d4ff',
-          'line-width': 1.5,
-          'line-opacity': 0.4,
-          'line-dasharray': [3, 2],
+          'line-width': 2,
+          'line-opacity': 0.5,
+          'line-dasharray': [4, 2],
         },
       })
 
-      // Historical AIS position dots
       m.addSource('vessel-track-points', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       })
 
-      // Halo for most-recent point
       m.addLayer({
         id: 'vessel-track-points-halo',
         type: 'circle',
         source: 'vessel-track-points',
         filter: ['==', ['get', 'is_latest'], true],
         paint: {
-          'circle-radius': 10,
+          'circle-radius': 12,
           'circle-color': '#00d4ff',
-          'circle-opacity': 0.15,
+          'circle-opacity': 0.2,
           'circle-stroke-width': 0,
         },
       })
 
-      // All historical dots — color fades old→new (dark blue → cyan)
       m.addLayer({
         id: 'vessel-track-points-layer',
         type: 'circle',
         source: 'vessel-track-points',
         paint: {
           'circle-radius': [
-            'case', ['==', ['get', 'is_latest'], true], 5,
-            ['>', ['get', 'age_frac'], 0.8], 3.5,
-            2.5,
+            'case', ['==', ['get', 'is_latest'], true], 6,
+            ['>', ['get', 'age_frac'], 0.8], 4, 3,
           ],
           'circle-color': [
             'interpolate', ['linear'], ['get', 'age_frac'],
-            0, '#1a3a5c',
-            0.5, '#0077aa',
-            1, '#00d4ff',
+            0, '#1a3a5c', 0.5, '#0077aa', 1, '#00d4ff',
           ],
           'circle-opacity': [
-            'interpolate', ['linear'], ['get', 'age_frac'],
-            0, 0.3,
-            1, 0.95,
+            'interpolate', ['linear'], ['get', 'age_frac'], 0, 0.3, 1, 0.95,
           ],
-          'circle-stroke-width': ['case', ['==', ['get', 'is_latest'], true], 1.5, 0.5],
+          'circle-stroke-width': ['case', ['==', ['get', 'is_latest'], true], 2, 0.5],
           'circle-stroke-color': ['case', ['==', ['get', 'is_latest'], true], '#ffffff', '#00d4ff'],
-          'circle-stroke-opacity': 0.6,
+          'circle-stroke-opacity': 0.7,
         },
       })
 
-      // Click on vessel symbol
-      m.on('click', 'vessels-layer', (e) => {
+      // ── INTERACTIONS ─────────────────────────────────────────────────────
+
+      // Vessel click (all vessel layers)
+      const handleVesselClick = (e: mapboxgl.MapMouseEvent & { features?: mapboxgl.MapboxGeoJSONFeature[] }) => {
         const f = e.features?.[0]
-        if (f?.properties?.mmsi) selectVessel(f.properties.mmsi)
-      })
+        if (f?.properties?.mmsi) {
+          selectVessel(f.properties.mmsi)
+          setSelectedPort(null)
+        }
+      }
+      m.on('click', 'vessels-layer', handleVesselClick)
+      m.on('click', 'vessels-pil-layer', handleVesselClick)
+      m.on('click', 'vessels-selected-layer', handleVesselClick)
 
       m.on('mouseenter', 'vessels-layer', () => { m.getCanvas().style.cursor = 'pointer' })
+      m.on('mouseenter', 'vessels-pil-layer', () => { m.getCanvas().style.cursor = 'pointer' })
       m.on('mouseleave', 'vessels-layer', () => { m.getCanvas().style.cursor = '' })
+      m.on('mouseleave', 'vessels-pil-layer', () => { m.getCanvas().style.cursor = '' })
 
-      // Hover popup on historical track dots
-      const trackPopup = new mapboxgl.Popup({
-        closeButton: false,
-        closeOnClick: false,
-        className: 'tmm-popup',
-        offset: 8,
+      // Port click
+      m.on('click', 'ports-circles', (e) => {
+        const props = e.features?.[0]?.properties
+        if (!props) return
+        selectVessel(null)
+        // Find port from id stored in feature
+        setSelectedPort((prev) =>
+          prev?.id === props.port_id ? null : ({ id: props.port_id, name: props.name, unlocode: props.unlocode, country: props.country, latitude: props.lat, longitude: props.lon, congestion_level: props.congestion, vessels_waiting: props.vessels_waiting, vessels_at_berth: props.vessels_at_berth, berth_utilization_pct: props.berth_util, status: 'operational' } as any)
+        )
+        e.preventDefault()
+      })
+      m.on('mouseenter', 'ports-circles', () => { m.getCanvas().style.cursor = 'pointer' })
+      m.on('mouseleave', 'ports-circles', () => { m.getCanvas().style.cursor = '' })
+
+      // Click on empty map → deselect
+      m.on('click', (e) => {
+        const features = m.queryRenderedFeatures(e.point, { layers: ['vessels-layer', 'vessels-pil-layer', 'ports-circles'] })
+        if (!features.length) {
+          selectVessel(null)
+          setSelectedPort(null)
+        }
       })
 
+      // Track point hover popup
+      const trackPopup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, className: 'tmm-popup', offset: 8 })
       m.on('mouseenter', 'vessel-track-points-layer', (e) => {
         m.getCanvas().style.cursor = 'crosshair'
         const f = e.features?.[0]
@@ -228,7 +394,6 @@ export default function MapPage() {
           </div>
         `).addTo(m)
       })
-
       m.on('mouseleave', 'vessel-track-points-layer', () => {
         m.getCanvas().style.cursor = ''
         trackPopup.remove()
@@ -241,45 +406,35 @@ export default function MapPage() {
     return () => { m.remove(); map.current = null }
   }, [config?.mapbox_token])
 
-  // Update port markers
+  // Update port GeoJSON source
   useEffect(() => {
     if (!mapReady || !map.current || !ports) return
-    const m = map.current
+    const source = map.current.getSource('ports') as mapboxgl.GeoJSONSource
+    if (!source) return
 
-    ports.forEach((port) => {
-      const color = CONGESTION_COLORS[port.congestion_level] || '#00c48c'
-      portMarkers.current.get(port.id)?.remove()
-
-      const el = document.createElement('div')
-      el.style.cssText = `width:12px;height:12px;background:${color};border:2px solid rgba(255,255,255,0.3);border-radius:50%;cursor:pointer;box-shadow:0 0 8px ${color}80;transition:transform 0.2s,box-shadow 0.2s`
-      el.addEventListener('mouseenter', () => { el.style.transform = 'scale(1.6)' })
-      el.addEventListener('mouseleave', () => { el.style.transform = 'scale(1)' })
-
-      const popup = new mapboxgl.Popup({ offset: 15, closeButton: false })
-        .setHTML(`<div class="text-xs">
-          <div class="font-semibold text-white mb-1">${port.name}</div>
-          <div class="text-slate-300">${port.unlocode} · ${port.country}</div>
-          <div class="flex items-center gap-1 mt-2">
-            <span class="w-2 h-2 rounded-full" style="background:${color}"></span>
-            <span style="color:${color}">${port.congestion_level.toUpperCase()}</span>
-          </div>
-          <div class="mt-1 space-y-0.5 text-slate-300">
-            <div>Waiting: ${port.vessels_waiting}</div>
-            <div>At berth: ${port.vessels_at_berth}</div>
-            <div>Berth util: ${port.berth_utilization_pct.toFixed(0)}%</div>
-          </div>
-        </div>`)
-
-      const marker = new mapboxgl.Marker({ element: el })
-        .setLngLat([port.longitude, port.latitude])
-        .setPopup(popup)
-        .addTo(m)
-
-      portMarkers.current.set(port.id, marker)
+    source.setData({
+      type: 'FeatureCollection',
+      features: ports.map((port) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [port.longitude, port.latitude] },
+        properties: {
+          port_id: port.id,
+          name: port.name,
+          unlocode: port.unlocode,
+          country: port.country,
+          congestion: port.congestion_level,
+          vessels_waiting: port.vessels_waiting,
+          vessels_at_berth: port.vessels_at_berth,
+          berth_util: port.berth_utilization_pct,
+          lat: port.latitude,
+          lon: port.longitude,
+          selected: selectedPort?.id === port.id,
+        },
+      })),
     })
-  }, [mapReady, ports])
+  }, [mapReady, ports, selectedPort])
 
-  // Update vessel GeoJSON source — throttled via requestAnimationFrame
+  // Update vessel GeoJSON — throttled via rAF
   useEffect(() => {
     if (!mapReady || !map.current) return
     if (rafPending.current) return
@@ -292,29 +447,29 @@ export default function MapPage() {
       const source = m.getSource('vessels') as mapboxgl.GeoJSONSource
       if (!source) return
 
-      // Filter: only large SOLAS-compliant container ships (LOA >= 100m or unknown)
       const filtered = getFilteredVessels().filter((v) => {
         if (v.loa_m !== null && v.loa_m !== undefined && v.loa_m < 100) return false
         return true
       })
 
-      const features = filtered.map((v) => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [v.longitude, v.latitude] },
-        properties: {
-          mmsi: v.mmsi,
-          name: v.name,
-          pil: v.is_pil_vessel,
-          selected: v.mmsi === selectedMmsi,
-          course: v.course ?? 0,
-        },
-      }))
-
-      source.setData({ type: 'FeatureCollection', features })
+      source.setData({
+        type: 'FeatureCollection',
+        features: filtered.map((v) => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [v.longitude, v.latitude] },
+          properties: {
+            mmsi: v.mmsi,
+            name: v.name,
+            pil: v.is_pil_vessel,
+            selected: v.mmsi === selectedMmsi,
+            course: v.course ?? 0,
+          },
+        })),
+      })
     })
   }, [mapReady, vessels, selectedMmsi, getFilteredVessels])
 
-  // Render vessel track (line + individual position dots) when selected
+  // Render vessel track (line + dots)
   useEffect(() => {
     if (!mapReady || !map.current) return
     const m = map.current
@@ -330,7 +485,8 @@ export default function MapPage() {
       return
     }
 
-    const validPts = track.filter((p: any) => (p.lng ?? p.longitude) != null)
+    const validPts = track.filter((p: any) => (p.lng ?? p.longitude) != null && (p.lat ?? p.latitude) != null)
+    if (validPts.length === 0) { lineSource.setData(empty); pointSource.setData(empty); return }
 
     // Line
     if (validPts.length >= 2) {
@@ -346,28 +502,27 @@ export default function MapPage() {
       lineSource.setData(empty)
     }
 
-    // Individual position dots with age fraction (0=oldest, 1=newest)
     const tMin = Math.min(...validPts.map((p: any) => new Date(p.timestamp).getTime()))
     const tMax = Math.max(...validPts.map((p: any) => new Date(p.timestamp).getTime()))
     const tRange = tMax - tMin || 1
 
-    const pointFeatures = validPts.map((p: any, i: number) => {
-      const t = new Date(p.timestamp).getTime()
-      const age_frac = (t - tMin) / tRange
-      return {
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [p.lng ?? p.longitude, p.lat ?? p.latitude] },
-        properties: {
-          timestamp: p.timestamp,
-          speed: p.speed,
-          course: p.course,
-          age_frac,
-          is_latest: i === validPts.length - 1,
-        },
-      }
+    pointSource.setData({
+      type: 'FeatureCollection',
+      features: validPts.map((p: any, i: number) => {
+        const t = new Date(p.timestamp).getTime()
+        return {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [p.lng ?? p.longitude, p.lat ?? p.latitude] },
+          properties: {
+            timestamp: p.timestamp,
+            speed: p.speed,
+            course: p.course,
+            age_frac: (t - tMin) / tRange,
+            is_latest: i === validPts.length - 1,
+          },
+        }
+      }),
     })
-
-    pointSource.setData({ type: 'FeatureCollection', features: pointFeatures })
   }, [mapReady, selectedMmsi, track])
 
   // Fly to selected vessel
@@ -375,41 +530,21 @@ export default function MapPage() {
     if (!mapReady || !map.current || !selectedMmsi) return
     const vessel = vessels.get(selectedMmsi)
     if (vessel) {
-      map.current.flyTo({
-        center: [vessel.longitude, vessel.latitude],
-        zoom: Math.max(map.current.getZoom(), 5),
-        duration: 1000,
-      })
+      map.current.flyTo({ center: [vessel.longitude, vessel.latitude], zoom: Math.max(map.current.getZoom(), 5), duration: 1000 })
     }
   }, [mapReady, selectedMmsi])
 
-  // Highlight current port when vessel calls are loaded
+  // Weather layer toggle
   useEffect(() => {
     if (!mapReady || !map.current) return
-
-    // Reset all port highlights first
-    portMarkers.current.forEach((marker) => {
-      const el = marker.getElement()
-      el.style.transform = ''
-      el.style.boxShadow = ''
-    })
-
-    if (!calls || !selectedMmsi) return
-
-    const currentCall = (calls as any[]).find((c) =>
-      c.status === 'at_berth' || c.status === 'waiting' || c.status === 'anchored'
-    ) || (calls as any[])[0]
-
-    if (!currentCall?.port_id) return
-
-    const portMarker = portMarkers.current.get(currentCall.port_id)
-    if (portMarker) {
-      const el = portMarker.getElement()
-      el.style.transform = 'scale(2.2)'
-      el.style.boxShadow = '0 0 16px #00d4ff, 0 0 6px #00d4ff'
-      el.style.border = '2px solid #00d4ff'
-    }
-  }, [mapReady, calls, selectedMmsi])
+    const m = map.current
+    try {
+      const layer = m.getLayer('weather-radar-layer')
+      if (layer) {
+        m.setLayoutProperty('weather-radar-layer', 'visibility', weatherOn ? 'visible' : 'none')
+      }
+    } catch {}
+  }, [mapReady, weatherOn])
 
   return (
     <div className="relative h-full">
@@ -427,15 +562,13 @@ export default function MapPage() {
         </div>
       )}
 
-      {/* Filter toggle */}
+      {/* Toolbar */}
       <div className="absolute top-4 left-4 z-10 flex gap-2">
         <button
           onClick={() => setShowFilters(!showFilters)}
           className={clsx(
             'flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium shadow-lg transition-all',
-            showFilters
-              ? 'bg-cyan-maritime text-navy-900'
-              : 'bg-navy-800/90 border border-navy-500 text-slate-300 hover:text-slate-100'
+            showFilters ? 'bg-cyan-maritime text-navy-900' : 'bg-navy-800/90 border border-navy-500 text-slate-300 hover:text-slate-100'
           )}
         >
           <Filter className="w-4 h-4" />
@@ -443,6 +576,18 @@ export default function MapPage() {
           {useVesselStore.getState().filters.pilOnly && (
             <span className="bg-cyan-maritime/20 text-cyan-maritime text-xs px-1.5 rounded">PIL</span>
           )}
+        </button>
+
+        <button
+          onClick={() => setWeatherOn(!weatherOn)}
+          className={clsx(
+            'flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium shadow-lg transition-all',
+            weatherOn ? 'bg-blue-600 text-white' : 'bg-navy-800/90 border border-navy-500 text-slate-300 hover:text-slate-100'
+          )}
+          title="Toggle precipitation radar"
+        >
+          {weatherOn ? <Cloud className="w-4 h-4" /> : <CloudOff className="w-4 h-4" />}
+          <span className="hidden sm:inline">Weather</span>
         </button>
       </div>
 
@@ -452,9 +597,17 @@ export default function MapPage() {
         </div>
       )}
 
-      {selectedMmsi && (
+      {/* Vessel detail panel */}
+      {selectedMmsi && !selectedPort && (
         <div className="absolute top-4 right-4 z-10 w-80">
           <VesselDetailPanel mmsi={selectedMmsi} onClose={() => selectVessel(null)} />
+        </div>
+      )}
+
+      {/* Port detail panel */}
+      {selectedPort && !selectedMmsi && (
+        <div className="absolute top-4 right-4 z-10 w-80">
+          <PortPanel port={selectedPort} onClose={() => setSelectedPort(null)} />
         </div>
       )}
 
@@ -475,11 +628,11 @@ export default function MapPage() {
         <div className="bg-navy-800/90 border border-navy-500 rounded-lg p-3 text-xs space-y-1.5">
           <div className="text-slate-400 font-medium uppercase tracking-wider mb-2">Vessels</div>
           <div className="flex items-center gap-2">
-            <div style={{ width: 12, height: 14, background: '#00d4ff', clipPath: 'polygon(50% 0%, 100% 100%, 50% 78%, 0% 100%)' }} />
+            <div style={{ width: 12, height: 16, background: '#00d4ff', clipPath: 'polygon(50% 0%, 100% 100%, 50% 77%, 0% 100%)' }} />
             <span className="text-cyan-maritime font-medium">PIL Fleet</span>
           </div>
           <div className="flex items-center gap-2">
-            <div style={{ width: 12, height: 14, background: '#93c5fd', clipPath: 'polygon(50% 0%, 100% 100%, 50% 78%, 0% 100%)' }} />
+            <div style={{ width: 10, height: 14, background: '#93c5fd', clipPath: 'polygon(50% 0%, 100% 100%, 50% 77%, 0% 100%)' }} />
             <span className="text-slate-300">Container Ship</span>
           </div>
           <div className="border-t border-navy-600 pt-1.5 mt-1.5">

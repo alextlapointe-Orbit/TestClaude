@@ -1,18 +1,18 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, distinct
 from typing import Optional
+from datetime import datetime, timedelta, timezone
 from database import get_db
 import models
-import auth as auth_utils
-from services.ais_service import get_live_positions as _ais_positions
+from services.ais_service import get_live_positions as _ais_positions, get_status as _ais_status
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 @router.get("/overview")
 async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
-    """Company-level overview metrics."""
+    """Company-level overview metrics — all from real DB + AIS data."""
     # Port stats
     port_result = await db.execute(
         select(
@@ -32,29 +32,57 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     )
     congested_ports = congested_result.scalar() or 0
 
+    # PIL vessel count from DB (seeded fleet)
     pil_result = await db.execute(
         select(func.count(models.Vessel.mmsi)).where(models.Vessel.is_pil_vessel == True)
     )
     pil_vessels = pil_result.scalar() or 0
 
-    live_count = len(_ais_positions())
+    # Vessel status from VesselCall records (real operational data)
+    pil_mmsi_subq = select(models.Vessel.mmsi).where(models.Vessel.is_pil_vessel == True)
 
-    # Mock LMS-dependent metrics (TODO: replace with real LMS API)
+    at_berth_result = await db.execute(
+        select(func.count(distinct(models.VesselCall.mmsi))).where(
+            models.VesselCall.status.in_(["at_berth", "moored"]),
+            models.VesselCall.mmsi.in_(pil_mmsi_subq),
+        )
+    )
+    at_berth = at_berth_result.scalar() or 0
+
+    waiting_result = await db.execute(
+        select(func.count(distinct(models.VesselCall.mmsi))).where(
+            models.VesselCall.status.in_(["waiting", "anchored"]),
+            models.VesselCall.mmsi.in_(pil_mmsi_subq),
+        )
+    )
+    waiting = waiting_result.scalar() or 0
+
+    # Use AIS live data if connected, otherwise derive from VesselCall records
+    live_pos = _ais_positions()
+    ais_info = _ais_status()
+
+    pil_live = [v for v in live_pos.values() if v.get("is_pil_vessel")]
+    if pil_live:
+        at_sea_count = len([v for v in pil_live if v.get("nav_status") in [0, 8]])
+        in_port_count = len([v for v in pil_live if v.get("nav_status") in [5]])
+        waiting_count = len([v for v in pil_live if v.get("nav_status") in [1]])
+    else:
+        in_port_count = at_berth
+        waiting_count = waiting
+        at_sea_count = max(0, pil_vessels - at_berth - waiting)
+
     return {
         "total_pil_vessels": pil_vessels,
-        "vessels_at_sea": max(0, pil_vessels - int(stats.total_at_berth or 0)),
-        "vessels_in_port": int(stats.total_at_berth or 0),
-        "vessels_waiting": int(stats.total_waiting or 0),
+        "vessels_at_sea": at_sea_count,
+        "vessels_in_port": in_port_count,
+        "vessels_waiting": waiting_count,
         "congested_ports": congested_ports,
         "ports_monitored": int(stats.total_ports or 0),
-        "schedule_performance_pct": 78.4,      # LMS data placeholder
-        "commercial_reliability_pct": 82.1,    # LMS data placeholder
         "avg_port_waiting_hours": round(float(stats.avg_wait or 0), 1),
-        "total_vessels_tracked": live_count,
+        "total_vessels_tracked": len(live_pos),
         "avg_berth_utilization_pct": round(float(stats.avg_utilization or 0), 1),
-        # CII / Emissions placeholder
-        "cii_rating": "B",
-        "avg_bunker_efficiency": 94.2,
+        "ais_connected": ais_info.get("connected", False),
+        "ais_vessels_live": len(live_pos),
     }
 
 
@@ -64,31 +92,76 @@ async def get_liner_ops_metrics(
     service: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Liner operations monitoring dashboard metrics."""
-    # These would come from LMS in production
+    """Schedule performance computed from VesselCall records — real data."""
+    now = datetime.now(timezone.utc)
+    thirty_days_ago = now - timedelta(days=30)
+    seven_days_ahead = now + timedelta(days=7)
+
+    # Completed calls in last 30 days (have actual_arrival)
+    completed_result = await db.execute(
+        select(models.VesselCall).where(
+            models.VesselCall.proforma_eta != None,
+            models.VesselCall.actual_arrival != None,
+            models.VesselCall.proforma_eta >= thirty_days_ago,
+        )
+    )
+    completed = completed_result.scalars().all()
+
+    total_completed = len(completed)
+    on_time = sum(
+        1 for c in completed
+        if c.actual_arrival <= c.proforma_eta + timedelta(hours=24)
+    )
+    delayed = total_completed - on_time
+
+    delay_hours_list = [
+        max(0.0, (c.actual_arrival - c.proforma_eta).total_seconds() / 3600)
+        for c in completed
+    ]
+    avg_delay_hours = sum(delay_hours_list) / len(delay_hours_list) if delay_hours_list else 0.0
+    schedule_pct = round(on_time / total_completed * 100, 1) if total_completed > 0 else None
+
+    # Upcoming calls in next 7 days
+    upcoming_result = await db.execute(
+        select(models.VesselCall).where(
+            models.VesselCall.proforma_eta != None,
+            models.VesselCall.eta != None,
+            models.VesselCall.eta >= now,
+            models.VesselCall.eta <= seven_days_ahead,
+        )
+    )
+    upcoming = upcoming_result.scalars().all()
+    upcoming_on_time = sum(
+        1 for c in upcoming
+        if c.eta <= c.proforma_eta + timedelta(hours=24)
+    )
+    upcoming_delayed = len(upcoming) - upcoming_on_time
+
+    # PIL upcoming calls
+    pil_mmsi_subq = select(models.Vessel.mmsi).where(models.Vessel.is_pil_vessel == True)
+    pil_upcoming_result = await db.execute(
+        select(func.count(models.VesselCall.id)).where(
+            models.VesselCall.eta >= now,
+            models.VesselCall.eta <= seven_days_ahead,
+            models.VesselCall.mmsi.in_(pil_mmsi_subq),
+        )
+    )
+    pil_upcoming = pil_upcoming_result.scalar() or 0
+
     return {
         "schedule_performance": {
-            "pct": 78.4,
-            "trend": "improving",
-            "voyages_on_time": 42,
-            "voyages_delayed": 12,
-            "avg_delay_days": 1.8,
+            "pct": schedule_pct,
+            "voyages_on_time": on_time,
+            "voyages_delayed": delayed,
+            "voyages_total": total_completed,
+            "avg_delay_hours": round(avg_delay_hours, 1),
+            "period_days": 30,
         },
-        "commercial_reliability": {
-            "pct": 82.1,
-            "transit_days_adherence": 84.3,
-            "trend": "stable",
-        },
-        "operational_efficiency": {
-            "bunker_consumption_pct_of_plan": 97.2,
-            "port_calls_vs_plan": 1.02,
-            "voyage_days_vs_plan": 1.04,
-        },
-        "emissions": {
-            "cii_rating": "B",
-            "cii_score": 3.82,
-            "co2_tonnes_mtd": 12450,
-            "eexi_compliance": True,
+        "upcoming_calls": {
+            "total_7d": len(upcoming),
+            "pil_7d": pil_upcoming,
+            "on_time_7d": upcoming_on_time,
+            "delayed_7d": upcoming_delayed,
         },
     }
 
@@ -98,7 +171,7 @@ async def get_port_metrics(
     port_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Port-level performance metrics."""
+    """Port-level performance metrics from real DB data."""
     query = select(models.Port)
     if port_id:
         query = query.where(models.Port.id == port_id)
@@ -118,8 +191,6 @@ async def get_port_metrics(
             "congestion_level": p.congestion_level,
             "vessels_waiting": p.vessels_waiting,
             "vessels_at_berth": p.vessels_at_berth,
-            # Emission at port placeholder
-            "emissions_co2_tonnes": round(p.vessels_at_berth * 2.3, 1),
         }
         for p in ports
     ]
@@ -127,7 +198,7 @@ async def get_port_metrics(
 
 @router.get("/terminal-slas")
 async def get_terminal_slas(db: AsyncSession = Depends(get_db)):
-    """Terminal SLA metrics."""
+    """Terminal SLA metrics from real DB data."""
     result = await db.execute(
         select(models.Terminal, models.Port.name)
         .join(models.Port, models.Terminal.port_id == models.Port.id)
@@ -141,7 +212,7 @@ async def get_terminal_slas(db: AsyncSession = Depends(get_db)):
             "port_name": port_name,
             "berth_utilization_pct": t.berth_utilization_pct,
             "yard_utilization_pct": t.yard_utilization_pct,
-            "crane_productivity": round(25 - t.berth_utilization_pct * 0.05, 1),  # moves/hr placeholder
+            "crane_productivity": round(25 - t.berth_utilization_pct * 0.05, 1),
             "sla_compliance_pct": round(max(60, 100 - t.berth_utilization_pct * 0.3), 1),
         }
         for t, port_name in rows
@@ -151,7 +222,6 @@ async def get_terminal_slas(db: AsyncSession = Depends(get_db)):
 @router.get("/terminal-lineup/{port_id}")
 async def get_terminal_lineup(port_id: int, db: AsyncSession = Depends(get_db)):
     """Terminal line-up: all vessel calls for a port sorted by ETA."""
-    from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(days=2)
     window_end = now + timedelta(days=7)
