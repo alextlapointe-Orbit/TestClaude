@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, distinct
 from typing import Optional
 from datetime import datetime, timedelta, timezone
+from collections import defaultdict
 from database import get_db
 import models
 from services.ais_service import get_live_positions as _ais_positions, get_status as _ais_status
@@ -36,45 +37,84 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     pil_result = await db.execute(
         select(func.count(models.Vessel.mmsi)).where(models.Vessel.is_pil_vessel == True)
     )
-    pil_vessels = pil_result.scalar() or 0
+    pil_total = pil_result.scalar() or 0
 
-    # Vessel status from VesselCall records (real operational data)
+    # Determine current status per PIL vessel using VesselCall records.
+    # Each vessel has multiple calls (one per port in the service rotation).
+    # We find the "current" call per vessel: the one whose window covers now,
+    # or if none is active, the call closest in time to now.
     pil_mmsi_subq = select(models.Vessel.mmsi).where(models.Vessel.is_pil_vessel == True)
 
-    at_berth_result = await db.execute(
-        select(func.count(distinct(models.VesselCall.mmsi))).where(
-            models.VesselCall.status.in_(["at_berth", "moored"]),
-            models.VesselCall.mmsi.in_(pil_mmsi_subq),
-        )
+    all_calls_result = await db.execute(
+        select(
+            models.VesselCall.mmsi,
+            models.VesselCall.status,
+            models.VesselCall.eta,
+            models.VesselCall.etd,
+        ).where(models.VesselCall.mmsi.in_(pil_mmsi_subq))
     )
-    at_berth = at_berth_result.scalar() or 0
+    all_calls = all_calls_result.all()
+    now = datetime.now(timezone.utc)
 
-    waiting_result = await db.execute(
-        select(func.count(distinct(models.VesselCall.mmsi))).where(
-            models.VesselCall.status.in_(["waiting", "anchored"]),
-            models.VesselCall.mmsi.in_(pil_mmsi_subq),
-        )
-    )
-    waiting = waiting_result.scalar() or 0
+    # Group calls by MMSI
+    vessel_calls: dict = defaultdict(list)
+    for call in all_calls:
+        vessel_calls[call.mmsi].append(call)
 
-    # Use AIS live data if connected, otherwise derive from VesselCall records
+    at_berth_count = 0
+    waiting_count = 0
+    at_sea_count = 0
+
+    for mmsi, calls in vessel_calls.items():
+        # Priority 1: call currently active (eta <= now AND (etd is null OR etd >= now))
+        active = [
+            c for c in calls
+            if c.eta and c.eta <= now and (not c.etd or c.etd >= now)
+        ]
+        if active:
+            current = min(active, key=lambda c: abs((c.eta - now).total_seconds()))
+        else:
+            # Priority 2: most recent past call
+            past = [c for c in calls if c.eta and c.eta <= now]
+            if past:
+                current = max(past, key=lambda c: c.eta)
+            else:
+                # All future — vessel is underway toward first port
+                current = min(calls, key=lambda c: c.eta or now + timedelta(days=999))
+
+        s = current.status if current else "underway"
+        if s in ("at_berth", "moored"):
+            at_berth_count += 1
+        elif s in ("waiting", "anchored"):
+            waiting_count += 1
+        else:
+            at_sea_count += 1
+
+    # Vessels with no calls at all → assumed at sea
+    pil_with_calls = set(vessel_calls.keys())
+    all_pil_result = await db.execute(pil_mmsi_subq)
+    all_pil_mmsis = {r[0] for r in all_pil_result.all()}
+    at_sea_count += len(all_pil_mmsis - pil_with_calls)
+
+    # Clamp: ensure sum = total (rounding/edge cases)
+    subtotal = at_berth_count + waiting_count + at_sea_count
+    if subtotal > pil_total:
+        # Scale down proportionally
+        factor = pil_total / subtotal
+        at_berth_count = round(at_berth_count * factor)
+        waiting_count = round(waiting_count * factor)
+        at_sea_count = pil_total - at_berth_count - waiting_count
+    elif subtotal < pil_total:
+        at_sea_count += (pil_total - subtotal)
+
+    # AIS live data — separate count (all container ships tracked, not just PIL)
     live_pos = _ais_positions()
     ais_info = _ais_status()
 
-    pil_live = [v for v in live_pos.values() if v.get("is_pil_vessel")]
-    if pil_live:
-        at_sea_count = len([v for v in pil_live if v.get("nav_status") in [0, 8]])
-        in_port_count = len([v for v in pil_live if v.get("nav_status") in [5]])
-        waiting_count = len([v for v in pil_live if v.get("nav_status") in [1]])
-    else:
-        in_port_count = at_berth
-        waiting_count = waiting
-        at_sea_count = max(0, pil_vessels - at_berth - waiting)
-
     return {
-        "total_pil_vessels": pil_vessels,
+        "total_pil_vessels": pil_total,
         "vessels_at_sea": at_sea_count,
-        "vessels_in_port": in_port_count,
+        "vessels_in_port": at_berth_count,
         "vessels_waiting": waiting_count,
         "congested_ports": congested_ports,
         "ports_monitored": int(stats.total_ports or 0),
@@ -183,8 +223,6 @@ async def get_port_metrics(
             "port_id": p.id,
             "port_name": p.name,
             "unlocode": p.unlocode,
-            "vessel_turnaround_hours": round(p.avg_waiting_hours + 20, 1),
-            "berth_on_arrival_pct": round(max(0, 100 - p.vessels_waiting * 8), 1),
             "congestion_impact_hours": round(p.avg_waiting_hours, 1),
             "berth_utilization_pct": p.berth_utilization_pct,
             "yard_utilization_pct": p.yard_utilization_pct,
@@ -198,7 +236,7 @@ async def get_port_metrics(
 
 @router.get("/terminal-slas")
 async def get_terminal_slas(db: AsyncSession = Depends(get_db)):
-    """Terminal SLA metrics from real DB data."""
+    """Terminal utilization metrics from real DB data."""
     result = await db.execute(
         select(models.Terminal, models.Port.name)
         .join(models.Port, models.Terminal.port_id == models.Port.id)
@@ -212,8 +250,9 @@ async def get_terminal_slas(db: AsyncSession = Depends(get_db)):
             "port_name": port_name,
             "berth_utilization_pct": t.berth_utilization_pct,
             "yard_utilization_pct": t.yard_utilization_pct,
-            "crane_productivity": round(25 - t.berth_utilization_pct * 0.05, 1),
-            "sla_compliance_pct": round(max(60, 100 - t.berth_utilization_pct * 0.3), 1),
+            "crane_count": t.crane_count,
+            "yard_capacity_teu": t.yard_capacity_teu,
+            "annual_capacity_teu": t.annual_capacity_teu,
         }
         for t, port_name in rows
     ]

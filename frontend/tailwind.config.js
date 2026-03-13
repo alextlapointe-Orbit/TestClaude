@@ -4,28 +4,35 @@ export default {
   theme: {
     extend: {
       colors: {
-        // OrbitMI-inspired dark maritime palette
+        // Deep maritime dark palette — ECDIS / ops center inspired
         navy: {
-          950: '#020912',
-          900: '#050d1a',
-          800: '#0a1628',
-          700: '#0f1f38',
-          600: '#152840',
-          500: '#1a3050',
-          400: '#244268',
-          300: '#2d5480',
+          950: '#010810',
+          900: '#020b18',
+          800: '#071525',
+          700: '#0c1e35',
+          600: '#112844',
+          500: '#163354',
+          400: '#1e4268',
+          300: '#2a5580',
         },
+        // Cyan — primary interactive / AIS live
         cyan: {
           maritime: '#00d4ff',
-          glow: '#00b4e0',
-          dim: '#0090b8',
+          glow:     '#00b8e0',
+          dim:      '#0090b8',
+          faint:    '#003d5c',
         },
-        // Status colors
+        // Amber — operational urgency / warnings
+        amber: {
+          ops: '#f59e0b',
+          dim: '#b45309',
+        },
+        // Status
         status: {
-          low: '#00c48c',
-          medium: '#ffb800',
-          high: '#ff6b35',
-          critical: '#ff4757',
+          low:      '#10b981',
+          medium:   '#f59e0b',
+          high:     '#f97316',
+          critical: '#ef4444',
         },
       },
       fontFamily: {
@@ -33,22 +40,31 @@ export default {
         mono: ['JetBrains Mono', 'Consolas', 'monospace'],
       },
       backgroundImage: {
-        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'gradient-maritime': 'linear-gradient(135deg, #050d1a 0%, #0a1628 50%, #0f1f38 100%)',
+        'gradient-maritime': 'linear-gradient(135deg, #010810 0%, #020b18 50%, #071525 100%)',
+      },
+      boxShadow: {
+        'glow-cyan':   '0 0 20px rgba(0,212,255,0.25)',
+        'glow-cyan-sm':'0 0 8px rgba(0,212,255,0.2)',
+        'glow-amber':  '0 0 20px rgba(245,158,11,0.3)',
+        'glow-red':    '0 0 16px rgba(239,68,68,0.35)',
+        'glow-green':  '0 0 16px rgba(16,185,129,0.3)',
+        'panel':       '0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,180,255,0.08)',
       },
       animation: {
-        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'fade-in': 'fadeIn 0.3s ease-in-out',
-        'slide-in': 'slideIn 0.3s ease-out',
+        'pulse-slow':  'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'fade-in':     'fadeIn 0.25s ease-out',
+        'slide-in':    'slideIn 0.25s ease-out',
+        'slide-up':    'slideUp 0.25s ease-out',
+        'ping-slow':   'ping 2s cubic-bezier(0,0,0.2,1) infinite',
+        'glow-pulse':  'glowPulse 2s ease-in-out infinite',
       },
       keyframes: {
-        fadeIn: {
-          '0%': { opacity: '0' },
-          '100%': { opacity: '1' },
-        },
-        slideIn: {
-          '0%': { transform: 'translateX(-10px)', opacity: '0' },
-          '100%': { transform: 'translateX(0)', opacity: '1' },
+        fadeIn:    { '0%': { opacity: '0' },                               '100%': { opacity: '1' } },
+        slideIn:   { '0%': { transform: 'translateX(-12px)', opacity: '0' },'100%': { transform: 'translateX(0)', opacity: '1' } },
+        slideUp:   { '0%': { transform: 'translateY(8px)',   opacity: '0' },'100%': { transform: 'translateY(0)',  opacity: '1' } },
+        glowPulse: {
+          '0%, 100%': { boxShadow: '0 0 8px rgba(0,212,255,0.2)' },
+          '50%':      { boxShadow: '0 0 20px rgba(0,212,255,0.5)' },
         },
       },
     },

@@ -566,24 +566,27 @@ export default function MapPage() {
       <div className="absolute top-4 left-4 z-10 flex gap-2">
         <button
           onClick={() => setShowFilters(!showFilters)}
-          className={clsx(
-            'flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium shadow-lg transition-all',
-            showFilters ? 'bg-cyan-maritime text-navy-900' : 'bg-navy-800/90 border border-navy-500 text-slate-300 hover:text-slate-100'
-          )}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all"
+          style={showFilters
+            ? { background: '#00d4ff', color: '#020b18', boxShadow: '0 0 14px rgba(0,212,255,0.4)' }
+            : { background: 'rgba(2,11,24,0.92)', border: '1px solid rgba(22,51,84,0.8)', color: '#94a3b8' }
+          }
         >
           <Filter className="w-4 h-4" />
           <span className="hidden sm:inline">Filters</span>
           {useVesselStore.getState().filters.pilOnly && (
-            <span className="bg-cyan-maritime/20 text-cyan-maritime text-xs px-1.5 rounded">PIL</span>
+            <span className="text-[10px] px-1.5 rounded font-bold"
+              style={{ background: 'rgba(0,212,255,0.2)', color: '#00d4ff' }}>PIL</span>
           )}
         </button>
 
         <button
           onClick={() => setWeatherOn(!weatherOn)}
-          className={clsx(
-            'flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium shadow-lg transition-all',
-            weatherOn ? 'bg-blue-600 text-white' : 'bg-navy-800/90 border border-navy-500 text-slate-300 hover:text-slate-100'
-          )}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all"
+          style={weatherOn
+            ? { background: '#3b82f6', color: '#fff', boxShadow: '0 0 12px rgba(59,130,246,0.4)' }
+            : { background: 'rgba(2,11,24,0.92)', border: '1px solid rgba(22,51,84,0.8)', color: '#94a3b8' }
+          }
           title="Toggle precipitation radar"
         >
           {weatherOn ? <Cloud className="w-4 h-4" /> : <CloudOff className="w-4 h-4" />}
@@ -598,9 +601,25 @@ export default function MapPage() {
       )}
 
       {/* Vessel detail panel */}
-      {selectedMmsi && !selectedPort && (
+      {selectedMmsi && (
         <div className="absolute top-4 right-4 z-10 w-80">
-          <VesselDetailPanel mmsi={selectedMmsi} onClose={() => selectVessel(null)} />
+          <VesselDetailPanel
+            mmsi={selectedMmsi}
+            onClose={() => { selectVessel(null); setSelectedPort(null) }}
+            onPortSelect={(portId, portName) => {
+              const port = ports?.find((p) => p.id === portId)
+              if (port) {
+                selectVessel(null)
+                setSelectedPort(port)
+              } else {
+                // Port not in list — create a minimal entry to show panel
+                setSelectedPort({ id: portId, name: portName, unlocode: '', country: '',
+                  latitude: 0, longitude: 0, congestion_level: 'low' as const,
+                  vessels_waiting: 0, vessels_at_berth: 0, berth_utilization_pct: 0, status: 'operational' } as any)
+                selectVessel(null)
+              }
+            }}
+          />
         </div>
       )}
 
@@ -613,19 +632,25 @@ export default function MapPage() {
 
       {/* Live stats bar */}
       <div className="absolute bottom-8 left-4 z-10">
-        <div className="flex items-center gap-3 bg-navy-800/90 border border-navy-500 rounded-lg px-3 py-2 text-xs text-slate-400">
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 bg-cyan-maritime rounded-full animate-pulse" />
-            {vessels.size.toLocaleString()} vessels tracked
+        <div
+          className="flex items-center gap-3 rounded-lg px-3 py-2 text-xs"
+          style={{ background: 'rgba(2,11,24,0.9)', border: '1px solid rgba(22,51,84,0.8)' }}
+        >
+          <span className="flex items-center gap-1.5 text-slate-400">
+            <span className="w-2 h-2 rounded-full" style={{ background: '#00d4ff', boxShadow: '0 0 6px rgba(0,212,255,0.7)', animation: 'pulse 2s infinite' }} />
+            <span className="font-mono text-slate-300">{vessels.size.toLocaleString()}</span>
+            vessels
           </span>
-          <span>·</span>
-          <span>{ports?.length ?? 0} ports monitored</span>
+          <span className="text-slate-700">·</span>
+          <span className="text-slate-400">{ports?.length ?? 0} ports</span>
         </div>
       </div>
 
       {/* Legend */}
       <div className="absolute bottom-8 right-4 z-10">
-        <div className="bg-navy-800/90 border border-navy-500 rounded-lg p-3 text-xs space-y-1.5">
+        <div className="rounded-lg p-3 text-xs space-y-1.5"
+          style={{ background: 'rgba(2,11,24,0.9)', border: '1px solid rgba(22,51,84,0.8)' }}
+        >
           <div className="text-slate-400 font-medium uppercase tracking-wider mb-2">Vessels</div>
           <div className="flex items-center gap-2">
             <div style={{ width: 12, height: 16, background: '#00d4ff', clipPath: 'polygon(50% 0%, 100% 100%, 50% 77%, 0% 100%)' }} />
