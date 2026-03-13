@@ -1,6 +1,15 @@
 """
 AIS Service - connects to aisstream.io WebSocket and streams vessel positions.
-Filtered to container ships only (type codes 70-79) for performance.
+
+Subscription: all vessels (no server-side ShipTypes filter — many container
+ships have type_code=0 because they haven't sent ShipStaticData recently and
+would be missed by server-side filtering).
+
+Client-side filtering:
+- MMSI validation rejects non-vessel AIS targets (buoys/AtoN 99x, MOB 98x,
+  EPIRB/SART 97x, SAR aircraft 111x, group calls 00x)
+- ShipStaticData type codes evict confirmed non-container ships
+- Unspecified type (0) is kept until proven otherwise
 """
 
 import asyncio
@@ -19,9 +28,18 @@ logger = logging.getLogger(__name__)
 
 AIS_WS_URL = "wss://stream.aisstream.io/v0/stream"
 
-# Only container ship type codes
+# Container ship AIS type codes (ITU)
 CONTAINER_SHIP_TYPES = set(range(70, 80))
-MAX_TRACKED_VESSELS = 3000
+
+# Vessel MMSI prefixes to REJECT (non-vessel AIS transmitters)
+# 99 = Aids to Navigation (buoys, beacons, lighthouses)
+# 98 = Craft associated with parent ship (MOB devices)
+# 97 = EPIRB / AIS-SART / Man-Overboard
+# 00 = Group / broadcast calls
+# 111 = SAR aircraft
+_INVALID_MMSI_PREFIXES = ('99', '98', '97', '00', '01', '111')
+
+MAX_TRACKED_VESSELS = 10_000  # raised: no server-side ShipTypes filter
 
 _subscribers: Set[asyncio.Queue] = set()
 _live_positions: dict = {}
@@ -50,6 +68,19 @@ PIL_KEYWORDS = ["PIL", "PACIFIC INTERNATIONAL", "PAC INT"]
 
 def _is_pil_vessel(name: str) -> bool:
     return any(kw in (name or "").upper() for kw in PIL_KEYWORDS)
+
+
+def _is_valid_vessel_mmsi(mmsi: str) -> bool:
+    """
+    Reject non-vessel AIS targets: buoys (99x), MOB devices (98x),
+    EPIRBs/SART (97x), group calls (00x/01x), SAR aircraft (111x).
+    Valid vessel MMSI = exactly 9 digits, MID 002-775.
+    """
+    if not mmsi or len(mmsi) != 9 or not mmsi.isdigit():
+        return False
+    if mmsi.startswith(_INVALID_MMSI_PREFIXES):
+        return False
+    return True
 
 
 async def _save_positions_batch(positions: list[dict]):
@@ -139,24 +170,27 @@ async def run_ais_stream():
 
 
 async def _connect_and_stream():
+    # No server-side ShipTypes filter: many container ships have type_code=0
+    # (unspecified) because they haven't broadcast ShipStaticData recently.
+    # Server-side filtering would miss them. We filter client-side via MMSI
+    # validation and ShipStaticData type codes as static messages arrive.
     subscription = {
         "APIKey": settings.AISSTREAM_API_KEY,
         "BoundingBoxes": [[[-90, -180], [90, 180]]],
         "FilterMessageTypes": ["PositionReport", "ShipStaticData"],
-        "ShipTypes": list(CONTAINER_SHIP_TYPES),  # container ships only
     }
 
     batch = []
     batch_interval = 30
     last_save = asyncio.get_event_loop().time()
 
-    logger.info("Connecting to aisstream.io (container ships only)...")
+    logger.info("Connecting to aisstream.io (all commercial vessels, client-side filtering)...")
     async with websockets.connect(AIS_WS_URL, ping_interval=20, ping_timeout=30) as ws:
         await ws.send(json.dumps(subscription))
         _status["connected"] = True
         _status["last_connected_at"] = datetime.now(timezone.utc).isoformat()
         _status["last_error"] = None
-        logger.info("AIS stream connected - filtering container ships (type 70-79)")
+        logger.info("AIS stream connected")
 
         async for raw_msg in ws:
             try:
@@ -170,10 +204,12 @@ async def _connect_and_stream():
             msg_type = msg.get("MessageType")
             meta = msg.get("MetaData", {})
             mmsi = str(meta.get("MMSI", ""))
-            if not mmsi:
+
+            # Reject non-vessel AIS targets (buoys, AtoN, EPIRB, SAR, etc.)
+            if not _is_valid_vessel_mmsi(mmsi):
                 continue
 
-            # Skip known non-container ships
+            # Skip vessels confirmed as non-container ships
             if mmsi in _non_container_mmsi:
                 continue
 
