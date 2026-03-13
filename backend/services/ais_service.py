@@ -31,6 +31,16 @@ _container_mmsi: set = set()
 # MMSI set of confirmed non-container ships (exclude from tracking)
 _non_container_mmsi: set = set()
 
+# Connection state tracking
+_status: dict = {
+    "connected": False,
+    "last_connected_at": None,
+    "last_message_at": None,
+    "messages_received": 0,
+    "reconnect_count": 0,
+    "last_error": None,
+}
+
 NAV_STATUS = {
     0: "underway", 1: "at_anchor", 5: "moored", 8: "underway_sailing",
 }
@@ -100,9 +110,18 @@ async def _broadcast(data: dict):
     _subscribers.difference_update(dead)
 
 
+def get_status() -> dict:
+    return {
+        **_status,
+        "vessels_tracked": len(_live_positions),
+        "api_key_configured": bool(settings.AISSTREAM_API_KEY),
+    }
+
+
 async def run_ais_stream():
     if not settings.AISSTREAM_API_KEY:
         logger.warning("AISSTREAM_API_KEY not set - AIS stream disabled")
+        _status["last_error"] = "AISSTREAM_API_KEY not configured"
         return
 
     backoff = 2
@@ -111,6 +130,9 @@ async def run_ais_stream():
             await _connect_and_stream()
             backoff = 2
         except Exception as e:
+            _status["connected"] = False
+            _status["last_error"] = str(e)
+            _status["reconnect_count"] += 1
             logger.error(f"AIS stream error: {e}. Reconnecting in {backoff}s...")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
@@ -131,6 +153,9 @@ async def _connect_and_stream():
     logger.info("Connecting to aisstream.io (container ships only)...")
     async with websockets.connect(AIS_WS_URL, ping_interval=20, ping_timeout=30) as ws:
         await ws.send(json.dumps(subscription))
+        _status["connected"] = True
+        _status["last_connected_at"] = datetime.now(timezone.utc).isoformat()
+        _status["last_error"] = None
         logger.info("AIS stream connected - filtering container ships (type 70-79)")
 
         async for raw_msg in ws:
@@ -138,6 +163,9 @@ async def _connect_and_stream():
                 msg = json.loads(raw_msg)
             except json.JSONDecodeError:
                 continue
+
+            _status["messages_received"] += 1
+            _status["last_message_at"] = datetime.now(timezone.utc).isoformat()
 
             msg_type = msg.get("MessageType")
             meta = msg.get("MetaData", {})

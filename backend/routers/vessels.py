@@ -6,22 +6,15 @@ from database import get_db
 import models
 import schemas
 import auth as auth_utils
+from services.ais_service import get_live_positions as _ais_positions, get_status as _ais_status
 
 router = APIRouter(prefix="/api/vessels", tags=["vessels"])
 
-# In-memory store of latest vessel positions (populated by AIS service)
-# mmsi -> VesselPositionResponse dict
-_live_positions: dict = {}
 
-
-def get_live_positions() -> dict:
-    return _live_positions
-
-
-def update_position(position_data: dict):
-    mmsi = position_data.get("mmsi")
-    if mmsi:
-        _live_positions[mmsi] = position_data
+@router.get("/ais/status")
+async def ais_status():
+    """Return AIS stream connection state and message counters."""
+    return _ais_status()
 
 
 @router.get("", response_model=List[schemas.VesselPositionResponse])
@@ -33,8 +26,8 @@ async def list_vessels(
     near_port: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return latest vessel positions from the live in-memory store."""
-    positions = list(_live_positions.values())
+    """Return latest vessel positions from the live AIS in-memory store."""
+    positions = list(_ais_positions().values())
 
     if pil_only:
         positions = [p for p in positions if p.get("is_pil_vessel")]
@@ -64,8 +57,8 @@ async def list_vessels(
 async def get_vessel(mmsi: str, db: AsyncSession = Depends(get_db)):
     vessel = await db.get(models.Vessel, mmsi)
     if not vessel:
-        # Try live store
-        live = _live_positions.get(mmsi)
+        # Try live AIS store
+        live = _ais_positions().get(mmsi)
         if not live:
             raise HTTPException(status_code=404, detail="Vessel not found")
         return live

@@ -5,7 +5,7 @@ from typing import Optional
 from database import get_db
 import models
 import auth as auth_utils
-from routers.vessels import _live_positions
+from services.ais_service import get_live_positions as _ais_positions
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -37,7 +37,7 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     )
     pil_vessels = pil_result.scalar() or 0
 
-    live_count = len(_live_positions)
+    live_count = len(_ais_positions())
 
     # Mock LMS-dependent metrics (TODO: replace with real LMS API)
     return {
