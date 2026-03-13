@@ -1,17 +1,13 @@
 """
 AIS Service - connects to aisstream.io WebSocket and streams vessel positions.
 
-Subscription: ShipTypes=[0,70-79] — container ships plus type_code=0 (unspecified).
-Many container ships haven't broadcast ShipStaticData recently and transmit
-type_code=0; including type 0 ensures they are received. Tankers (80-89),
-bulk carriers, fishing boats, etc. are excluded at the server side.
+Subscription: ShipTypes=[70-79] — confirmed container ships only (ITU).
+Tankers, bulk carriers, fishing boats, and all other vessel types are excluded
+at the server side.
 
 Client-side filtering:
 - MMSI validation rejects non-vessel AIS targets (buoys/AtoN 99x, MOB 98x,
   EPIRB/SART 97x, SAR aircraft 111x, group calls 00x)
-- ShipStaticData type codes evict any non-container ship that slips through
-  with type_code=0 once their true type is known
-- Confirmed container ships (70-79) are flagged; type_code=0 kept until proven otherwise
 """
 
 import asyncio
@@ -180,17 +176,15 @@ async def _connect_and_stream():
         "APIKey": settings.AISSTREAM_API_KEY,
         "BoundingBoxes": [[[-90, -180], [90, 180]]],
         "FilterMessageTypes": ["PositionReport", "ShipStaticData"],
-        # Type 0 = unspecified (many container ships haven't sent ShipStaticData recently).
-        # Types 70-79 = confirmed container ships (ITU).
-        # Excludes tankers (80-89), bulk carriers, fishing (30-39), etc. at server side.
-        "ShipTypes": [0, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79],
+        # Types 70-79 = confirmed container ships only (ITU).
+        "ShipTypes": [70, 71, 72, 73, 74, 75, 76, 77, 78, 79],
     }
 
     batch = []
     batch_interval = 30
     last_save = asyncio.get_event_loop().time()
 
-    logger.info("Connecting to aisstream.io (ShipTypes=[0,70-79]: container ships + unspecified)...")
+    logger.info("Connecting to aisstream.io (ShipTypes=70-79: confirmed container ships only)...")
     async with websockets.connect(AIS_WS_URL, ping_interval=20, ping_timeout=30) as ws:
         await ws.send(json.dumps(subscription))
         _status["connected"] = True
