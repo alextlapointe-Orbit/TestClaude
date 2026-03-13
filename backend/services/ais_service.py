@@ -1,13 +1,18 @@
 """
 AIS Service - connects to aisstream.io WebSocket and streams vessel positions.
 
-Subscription: ShipTypes=[70-79] — confirmed container ships only (ITU).
-Tankers, bulk carriers, fishing boats, and all other vessel types are excluded
-at the server side.
+Subscription: ShipTypes=[0,70-79].
+- Type 0 (unspecified) is REQUIRED: most container ships at sea broadcast only
+  PositionReport and haven't sent ShipStaticData recently, so type_code=0.
+  Removing type 0 loses ~80% of the container fleet.
+- Types 70-79: confirmed container ships (ITU).
+- Tankers/bulk/fishing vessels also transmit their correct type codes, so they
+  are evicted client-side when their ShipStaticData arrives.
 
 Client-side filtering:
 - MMSI validation rejects non-vessel AIS targets (buoys/AtoN 99x, MOB 98x,
   EPIRB/SART 97x, SAR aircraft 111x, group calls 00x)
+- ShipStaticData evicts vessels confirmed as non-container (type > 0 and not 70-79)
 """
 
 import asyncio
@@ -176,15 +181,20 @@ async def _connect_and_stream():
         "APIKey": settings.AISSTREAM_API_KEY,
         "BoundingBoxes": [[[-90, -180], [90, 180]]],
         "FilterMessageTypes": ["PositionReport", "ShipStaticData"],
-        # Types 70-79 = confirmed container ships only (ITU).
-        "ShipTypes": [70, 71, 72, 73, 74, 75, 76, 77, 78, 79],
+        # Type 0 = unspecified — the majority of container ships at sea only
+        # transmit PositionReport and haven't sent ShipStaticData recently, so
+        # their type_code is 0. Excluding it means missing ~80% of the fleet.
+        # Types 70-79 = confirmed container ships (ITU).
+        # Tankers/bulk/fishing DO transmit their type, so they're excluded by
+        # the client-side ShipStaticData eviction when their true type arrives.
+        "ShipTypes": [0, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79],
     }
 
     batch = []
     batch_interval = 30
     last_save = asyncio.get_event_loop().time()
 
-    logger.info("Connecting to aisstream.io (ShipTypes=70-79: confirmed container ships only)...")
+    logger.info("Connecting to aisstream.io (ShipTypes=[0,70-79]: full container fleet including unspecified)...")
     async with websockets.connect(AIS_WS_URL, ping_interval=20, ping_timeout=30) as ws:
         await ws.send(json.dumps(subscription))
         _status["connected"] = True
