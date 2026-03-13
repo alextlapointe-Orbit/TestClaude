@@ -1,18 +1,22 @@
 """
 AIS Service - connects to aisstream.io WebSocket and streams vessel positions.
 
-Subscription: ShipTypes=[0,70-79].
-- Type 0 (unspecified) is REQUIRED: most container ships at sea broadcast only
-  PositionReport and haven't sent ShipStaticData recently, so type_code=0.
-  Removing type 0 loses ~80% of the container fleet.
-- Types 70-79: confirmed container ships (ITU).
-- Tankers/bulk/fishing vessels also transmit their correct type codes, so they
-  are evicted client-side when their ShipStaticData arrives.
+aisstream.io subscription parameters (confirmed supported):
+  - APIKey           (required)
+  - BoundingBoxes    (required)
+  - FilterMessageTypes (optional) — we use ["PositionReport", "ShipStaticData"]
+  - FiltersShipMMSI  (optional) — filter to specific MMSIs only
 
-Client-side filtering:
-- MMSI validation rejects non-vessel AIS targets (buoys/AtoN 99x, MOB 98x,
-  EPIRB/SART 97x, SAR aircraft 111x, group calls 00x)
-- ShipStaticData evicts vessels confirmed as non-container (type > 0 and not 70-79)
+NOTE: "ShipTypes" is NOT a real aisstream.io parameter. The server sends ALL
+vessel types regardless. ShipType filtering must be done client-side.
+
+Client-side filtering strategy:
+1. MMSI validation — reject buoys (99x), AtoN (98x), EPIRB/SART (97x),
+   SAR aircraft (111x), group calls (00x/01x).
+2. On ShipStaticData: if type_code is confirmed non-container (>0 and not 70-79),
+   evict from _live_positions and add to _non_container_mmsi blocklist.
+3. Cap: allow all vessel types in up to MAX_TRACKED_VESSELS, but when the cap is
+   hit only overwrite existing entries — don't block confirmed containers.
 """
 
 import asyncio
@@ -42,7 +46,7 @@ CONTAINER_SHIP_TYPES = set(range(70, 80))
 # 111 = SAR aircraft
 _INVALID_MMSI_PREFIXES = ('99', '98', '97', '00', '01', '111')
 
-MAX_TRACKED_VESSELS = 10_000  # raised: no server-side ShipTypes filter
+MAX_TRACKED_VESSELS = 20_000  # server sends all types; need headroom for eviction to work
 
 _subscribers: Set[asyncio.Queue] = set()
 _live_positions: dict = {}
@@ -173,28 +177,23 @@ async def run_ais_stream():
 
 
 async def _connect_and_stream():
-    # No server-side ShipTypes filter: many container ships have type_code=0
-    # (unspecified) because they haven't broadcast ShipStaticData recently.
-    # Server-side filtering would miss them. We filter client-side via MMSI
-    # validation and ShipStaticData type codes as static messages arrive.
+    # aisstream.io only supports: APIKey, BoundingBoxes, FiltersShipMMSI,
+    # FilterMessageTypes. "ShipTypes" is NOT supported — server sends all types.
+    # Client-side eviction (ShipStaticData type check) handles non-containers.
     subscription = {
         "APIKey": settings.AISSTREAM_API_KEY,
         "BoundingBoxes": [[[-90, -180], [90, 180]]],
         "FilterMessageTypes": ["PositionReport", "ShipStaticData"],
-        # Type 0 = unspecified — the majority of container ships at sea only
-        # transmit PositionReport and haven't sent ShipStaticData recently, so
-        # their type_code is 0. Excluding it means missing ~80% of the fleet.
-        # Types 70-79 = confirmed container ships (ITU).
-        # Tankers/bulk/fishing DO transmit their type, so they're excluded by
-        # the client-side ShipStaticData eviction when their true type arrives.
-        "ShipTypes": [0, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79],
     }
 
     batch = []
     batch_interval = 30
     last_save = asyncio.get_event_loop().time()
 
-    logger.info("Connecting to aisstream.io (ShipTypes=[0,70-79]: full container fleet including unspecified)...")
+    logger.info(
+        "Connecting to aisstream.io "
+        "(all vessel types from server; non-containers evicted client-side via ShipStaticData)..."
+    )
     async with websockets.connect(AIS_WS_URL, ping_interval=20, ping_timeout=30) as ws:
         await ws.send(json.dumps(subscription))
         _status["connected"] = True
@@ -232,9 +231,12 @@ async def _connect_and_stream():
                 if abs(lat) > 90 or abs(lon) > 180:
                     continue
 
-                # Drop position if we've exceeded memory cap
-                if len(_live_positions) >= MAX_TRACKED_VESSELS and mmsi not in _live_positions:
-                    continue
+                # Cap logic: confirmed containers always admitted; others dropped when full
+                if mmsi not in _live_positions:
+                    if len(_live_positions) >= MAX_TRACKED_VESSELS:
+                        if mmsi not in _container_mmsi:
+                            # Unknown type and cap hit — skip until a slot opens
+                            continue
 
                 name = (meta.get("ShipName") or "").strip()
                 pos_data = {
